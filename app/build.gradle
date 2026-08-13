@@ -9,8 +9,8 @@ android {
         applicationId "com.yakala.app"
         minSdk 24
         targetSdk 34
-        versionCode 14
-        versionName "1.4"
+        versionCode 15
+        versionName "1.5"
     }
     signingConfigs {
         yakala {
@@ -21,13 +21,8 @@ android {
         }
     }
     buildTypes {
-        debug {
-            signingConfig signingConfigs.yakala
-        }
-        release {
-            signingConfig signingConfigs.yakala
-            minifyEnabled false
-        }
+        debug { signingConfig signingConfigs.yakala }
+        release { signingConfig signingConfigs.yakala; minifyEnabled false }
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
