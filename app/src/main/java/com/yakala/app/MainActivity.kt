@@ -82,6 +82,7 @@ class MainActivity : Activity() {
 
     private val REQ_EXPORT = 71
     private val REQ_IMPORT = 72
+    private val WRAP = LinearLayout.LayoutParams.WRAP_CONTENT
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
     private fun roundBg(color: Int, radiusDp: Int = 14) =
@@ -192,7 +193,7 @@ class MainActivity : Activity() {
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { bottomMargin = dp(10) }
         }
-        listOf("•", "✅", "📞", "🛒", "💡").forEach { s ->
+        listOf("•", "✅", "📞", "", "💡").forEach { s ->
             val b = TextView(this).apply {
                 text = s
                 textSize = 16f
@@ -204,8 +205,7 @@ class MainActivity : Activity() {
                     input.setSelection(input.text.length)
                 }
             }
-            val lp = LinearLayout.LayoutParams(WRAP, WRAP).apply { marginEnd = dp(6) }
-            bulletRow.addView(b, lp)
+            bulletRow.addView(b, LinearLayout.LayoutParams(WRAP, WRAP).apply { marginEnd = dp(6) })
         }
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val mkLp = { LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
@@ -266,7 +266,6 @@ class MainActivity : Activity() {
         }
         updateFList()
         listFriends.adapter = fAdapter
-
         listFriends.setOnItemClickListener { _, _, pos, _ -> friendDialog(pos) }
 
         searchInput.addTextChangedListener(object : TextWatcher {
@@ -306,9 +305,15 @@ class MainActivity : Activity() {
         pollHandler.postDelayed(pollRunnable, 3000)
     }
 
-    private val WRAP = LinearLayout.LayoutParams.WRAP_CONTENT
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIncomingIntent(intent)
+        handleQuick(intent)
+        handleInviteIntent(intent)
+    }
 
-    // ==== AĞ (Firebase REST) ====
+    // ==== AĞ ====
     private fun conn(path: String, method: String, body: String? = null): String? = try {
         val c = URL("$serverUrl$path.json").openConnection() as HttpURLConnection
         c.requestMethod = method
@@ -352,11 +357,7 @@ class MainActivity : Activity() {
         return out
     }
 
-    private fun handleFriends(raw: String?) {
-        myFriends.clear()
-        myFriends.putAll(parseMap(raw))
-    }
-
+    private fun handleFriends(raw: String?) { myFriends.clear(); myFriends.putAll(parseMap(raw)) }
     private fun handleGrants(raw: String?) {
         myGrants.clear()
         for ((k, v) in parseMap(raw)) myGrants[k] = v.optString("status", "ask")
@@ -370,7 +371,7 @@ class MainActivity : Activity() {
             AlertDialog.Builder(this)
                 .setTitle("👥 Arkadaşlık isteği")
                 .setMessage("$name seni arkadaş olarak eklemek istiyor.\nİzin seviyesi seç:")
-                .setPositiveButton("✅ Tam izin") { _, _ -> acceptFriend(code, name, "full") }
+                .setPositiveButton("✅ Tam izin (karşılıklı)") { _, _ -> acceptFriend(code, name, "full") }
                 .setNeutralButton("❓ Her seferinde sor") { _, _ -> acceptFriend(code, name, "ask") }
                 .setNegativeButton("Reddet") { _, _ ->
                     Thread { conn("/users/$myCode/requests/$code", "DELETE") }.start()
@@ -385,14 +386,19 @@ class MainActivity : Activity() {
                 JSONObject().put("name", name).put("status", status).toString())
             conn("/users/$code/grants/$myCode", "PUT",
                 JSONObject().put("status", status).put("name", myName).toString())
+            conn("/users/$myCode/grants/$code", "PUT",
+                JSONObject().put("status", status).put("name", name).toString())
+            conn("/users/$code/friends/$myCode", "PUT",
+                JSONObject().put("name", myName).put("status", status).toString())
             conn("/users/$myCode/requests/$code", "DELETE")
         }.start()
-        Toast.makeText(this, "✅ $name eklendi", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "✅ $name eklendi (karşılıklı)", Toast.LENGTH_SHORT).show()
     }
 
     private fun handleInbox(raw: String?) {
         var newPending = false
-        for ((key, v) in parseMap(raw)) {
+        val map = parseMap(raw)
+        for ((key, v) in map) {
             if (key in seenInbox) continue
             seenInbox.add(key)
             v.put("id", key)
@@ -400,7 +406,7 @@ class MainActivity : Activity() {
             if (v.optBoolean("pending")) newPending = true
             Thread { conn("/users/$myCode/inbox/$key", "DELETE") }.start()
         }
-        if (parseMap(raw).isNotEmpty()) {
+        if (map.isNotEmpty()) {
             saveFNotes(); updateFList()
             if (newPending) Toast.makeText(this, "📬 Yeni not isteği var", Toast.LENGTH_SHORT).show()
         }
@@ -458,12 +464,18 @@ class MainActivity : Activity() {
     }
 
     // ==== ARKADAŞ MENÜSÜ ====
+    private fun clipText(): String {
+        val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+        val c = cm.primaryClip
+        return if (c != null && c.itemCount > 0) c.getItemAt(0).text?.toString() ?: "" else ""
+    }
+
     private fun friendsDialog() {
         if (serverUrl.isEmpty()) { setupServerDialog(); return }
         val items = arrayOf(
             "🪪 Kodum: $myCode (kopyala)",
+            "➕ Kod ile arkadaş bul",
             "📨 Davet linki paylaş",
-            "➕ Arkadaş ekle",
             "👥 Arkadaşlarım (${myFriends.size})",
             "🔗 Sunucu / isim değiştir"
         )
@@ -474,12 +486,68 @@ class MainActivity : Activity() {
                         .setPrimaryClip(ClipData.newPlainText("code", myCode))
                     Toast.makeText(this, "🪪 Kod kopyalandı: $myCode", Toast.LENGTH_SHORT).show()
                 }
-                1 -> shareInvite()
-                2 -> addFriendDialog()
+                1 -> addFriendDialog()
+                2 -> shareInvite()
                 3 -> friendsListDialog()
                 4 -> setupServerDialog()
             }
         }.show()
+    }
+
+    private fun addFriendDialog() {
+        val et = EditText(this).apply {
+            hint = "Arkadaşın kodu (6 hane)"
+            setText(Regex("\\d{6}").find(clipText())?.value ?: "")
+        }
+        AlertDialog.Builder(this)
+            .setTitle("➕ Kod ile arkadaş bul")
+            .setView(et)
+            .setPositiveButton("🔍 Ara") { _, _ ->
+                val code = Regex("\\d{6}").find(et.text.toString())?.value ?: ""
+                if (code.isEmpty() || code == myCode) {
+                    Toast.makeText(this, "Geçersiz kod", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                Toast.makeText(this, "🔍 Aranıyor...", Toast.LENGTH_SHORT).show()
+                Thread {
+                    val raw = conn("/users/$code/name", "GET")
+                    pollHandler.post {
+                        if (raw == null || raw == "null") {
+                            Toast.makeText(this, "❌ Bu kodda kullanıcı bulunamadı", Toast.LENGTH_LONG).show()
+                        } else {
+                            val name = raw.trim('"')
+                            AlertDialog.Builder(this)
+                                .setTitle("👤 $name bulundu")
+                                .setMessage("Arkadaş olarak eklensin mi?")
+                                .setPositiveButton("✅ Ekle") { _, _ -> inviteFriend(code, name) }
+                                .setNegativeButton("Vazgeç", null)
+                                .show()
+                        }
+                    }
+                }.start()
+            }
+            .setNegativeButton("Vazgeç", null)
+            .show()
+    }
+
+    private fun inviteFriend(code: String, name: String) {
+        Thread {
+            conn("/users/$code/requests/$myCode", "PUT", JSONObject().put("name", myName).toString())
+            conn("/users/$myCode/friends/$code", "PUT",
+                JSONObject().put("name", name).put("status", "ask").toString())
+            pollHandler.post {
+                Toast.makeText(this, "📨 $name'a istek gönderildi", Toast.LENGTH_SHORT).show()
+            }
+        }.start()
+    }
+
+    private fun shareInvite() {
+        val url = "https://umutsarac.github.io/yakala-android/invite.html?code=$myCode&name=$myName"
+        val i = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, "⚡ Yakala ile birbirimize not gönderelim! Kodum: $myCode\n$url")
+        }
+        startActivity(Intent.createChooser(i, "Daveti paylaş"))
     }
 
     private fun setupServerDialog() {
@@ -488,7 +556,7 @@ class MainActivity : Activity() {
             setPadding(dp(24), dp(16), dp(24), 0)
         }
         val urlEt = EditText(this).apply {
-            hint = "Firebase URL (https://...firebasedatabase.app)"
+            hint = "Firebase URL (https://...)"
             setText(serverUrl)
         }
         val nameEt = EditText(this).apply {
@@ -504,37 +572,8 @@ class MainActivity : Activity() {
                     .putString("server", urlEt.text.toString().trim().trimEnd('/'))
                     .putString("myName", nameEt.text.toString().trim().ifEmpty { "Yakala-$myCode" })
                     .apply()
-                Thread {
-                    conn("/users/$myCode/name", "PUT", "\"$myName\"")
-                }.start()
+                Thread { conn("/users/$myCode/name", "PUT", "\"$myName\"") }.start()
                 Toast.makeText(this, "✅ Kaydedildi", Toast.LENGTH_SHORT).show()
-            }
-            .setNegativeButton("Vazgeç", null)
-            .show()
-    }
-
-    private fun addFriendDialog() {
-        val ll = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(24), dp(16), dp(24), 0)
-        }
-        val codeEt = EditText(this).apply { hint = "Arkadaşın kodu (6 hane)"; setText(Regex("\\d{6}").find(clipText())?.value ?: "") }
-        val nameEt = EditText(this).apply { hint = "Arkadaşın adı" }
-        ll.addView(codeEt); ll.addView(nameEt)
-        AlertDialog.Builder(this)
-            .setTitle("➕ Arkadaş ekle")
-            .setView(ll)
-            .setPositiveButton("Ekle") { _, _ ->
-                val code = codeEt.text.toString().trim()
-                val name = nameEt.text.toString().trim().ifEmpty { "Arkadaş-$code" }
-                if (code.length < 4) { Toast.makeText(this, "Geçersiz kod", Toast.LENGTH_SHORT).show(); return@setPositiveButton }
-                Thread {
-                    conn("/users/$code/requests/$myCode", "PUT",
-                        JSONObject().put("name", myName).toString())
-                    conn("/users/$myCode/friends/$code", "PUT",
-                        JSONObject().put("name", name).put("status", "ask").toString())
-                    pollHandler.post { Toast.makeText(this, "📨 İstek gönderildi", Toast.LENGTH_SHORT).show() }
-                }.start()
             }
             .setNegativeButton("Vazgeç", null)
             .show()
@@ -552,20 +591,20 @@ class MainActivity : Activity() {
             val name = myFriends[code]?.optString("name") ?: code
             AlertDialog.Builder(this)
                 .setTitle(name)
-                .setItems(arrayOf("✅ Tam izin ver", "❓ Her seferinde sor", "🗑 Arkadaşı sil")) { _, s ->
+                .setItems(arrayOf("✅ Tam izin (karşılıklı)", "❓ Her seferinde sor", "🗑 Arkadaşı sil")) { _, s ->
                     Thread {
                         when (s) {
                             0 -> {
-                                conn("/users/$myCode/friends/$code", "PUT",
-                                    JSONObject().put("name", name).put("status", "full").toString())
-                                conn("/users/$code/grants/$myCode", "PUT",
-                                    JSONObject().put("status", "full").put("name", myName).toString())
+                                conn("/users/$myCode/friends/$code", "PUT", JSONObject().put("name", name).put("status", "full").toString())
+                                conn("/users/$code/grants/$myCode", "PUT", JSONObject().put("status", "full").put("name", myName).toString())
+                                conn("/users/$myCode/grants/$code", "PUT", JSONObject().put("status", "full").put("name", name).toString())
+                                conn("/users/$code/friends/$myCode", "PUT", JSONObject().put("name", myName).put("status", "full").toString())
                             }
                             1 -> {
-                                conn("/users/$myCode/friends/$code", "PUT",
-                                    JSONObject().put("name", name).put("status", "ask").toString())
-                                conn("/users/$code/grants/$myCode", "PUT",
-                                    JSONObject().put("status", "ask").put("name", myName).toString())
+                                conn("/users/$myCode/friends/$code", "PUT", JSONObject().put("name", name).put("status", "ask").toString())
+                                conn("/users/$code/grants/$myCode", "PUT", JSONObject().put("status", "ask").put("name", myName).toString())
+                                conn("/users/$myCode/grants/$code", "PUT", JSONObject().put("status", "ask").put("name", name).toString())
+                                conn("/users/$code/friends/$myCode", "PUT", JSONObject().put("name", myName).put("status", "ask").toString())
                             }
                             2 -> {
                                 conn("/users/$myCode/friends/$code", "DELETE")
@@ -596,12 +635,23 @@ class MainActivity : Activity() {
                 put("pending", pending)
             }
             Thread {
-                conn("/users/$code/inbox", "POST", o.toString())
+                val ok = conn("/users/$code/inbox", "POST", o.toString()) != null
                 pollHandler.post {
-                    Toast.makeText(this, if (pending) "📤 Gönderildi (onaya düştü)" else "📤 Gönderildi", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, if (!ok) "❌ Gönderilemedi" else if (pending) "📤 Gönderildi (onaya düştü)" else "📤 Gönderildi", Toast.LENGTH_SHORT).show()
                 }
             }.start()
         }.show()
+    }
+
+    private fun handleInviteIntent(i: Intent?) {
+        val u = i?.data ?: return
+        if (u.scheme == "yakala" && u.host == "invite") {
+            val code = u.getQueryParameter("code") ?: return
+            val name = u.getQueryParameter("name") ?: "Arkadaş"
+            if (code == myCode) return
+            if (serverUrl.isEmpty()) { setupServerDialog(); return }
+            inviteFriend(code, name)
+        }
     }
 
     // ==== NOT ADAPTÖRÜ ====
@@ -673,27 +723,19 @@ class MainActivity : Activity() {
         return SimpleDateFormat(if (sameDay) "HH:mm" else "d MMM HH:mm", Locale("tr")).format(Date(ts))
     }
 
-    override fun onNewIntent(intent: Intent?) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        handleIncomingIntent(intent)
-        handleQuick(intent)
-        handleInviteIntent(intent)
-    }
-
     private fun settingsDialog() {
         val items = arrayOf(
             if (isDark) "☀️ Açık temaya geç" else "🌙 Karanlık temaya geç",
             "📤 Yedekle (JSON)",
             "📥 Geri yükle",
-            "ℹ️ Yakala v1.1"
+            "ℹ️ Yakala v1.3"
         )
         AlertDialog.Builder(this).setTitle("⚙️ Ayarlar").setItems(items) { _, w ->
             when (w) {
                 0 -> { prefs.edit().putBoolean("dark", !isDark).apply(); recreate() }
                 1 -> exportNotes()
                 2 -> importNotes()
-                3 -> Toast.makeText(this, "⚡ Yakala v1.1 — arkadaş sistemi", Toast.LENGTH_SHORT).show()
+                3 -> Toast.makeText(this, "⚡ Yakala v1.3 — karşılıklı izin + kod arama", Toast.LENGTH_SHORT).show()
             }
         }.show()
     }
@@ -1083,38 +1125,5 @@ class MainActivity : Activity() {
         } catch (e: Exception) {
             Toast.makeText(this, "Oynatılamadı", Toast.LENGTH_SHORT).show()
         }
-    }
-
-    private fun clipText(): String {
-        val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
-        val c = cm.primaryClip
-        return if (c != null && c.itemCount > 0) c.getItemAt(0).text?.toString() ?: "" else ""
-    }
-
-    private fun handleInviteIntent(i: Intent?) {
-        val u = i?.data ?: return
-        if (u.scheme == "yakala" && u.host == "invite") {
-            val code = u.getQueryParameter("code") ?: return
-            val name = u.getQueryParameter("name") ?: "Arkadaş"
-            if (code == myCode) return
-            if (serverUrl.isEmpty()) { setupServerDialog(); return }
-            Thread {
-                conn("/users/$code/requests/$myCode", "PUT", JSONObject().put("name", myName).toString())
-                conn("/users/$myCode/friends/$code", "PUT",
-                    JSONObject().put("name", name).put("status", "ask").toString())
-                pollHandler.post {
-                    Toast.makeText(this@MainActivity, "📨 $name'a arkadaş isteği gönderildi", Toast.LENGTH_SHORT).show()
-                }
-            }.start()
-        }
-    }
-
-    private fun shareInvite() {
-        val url = "https://umutsarac.github.io/yakala-android/invite.html?code=$myCode&name=$myName"
-        val i = Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_TEXT, "⚡ Yakala ile birbirimize not gönderelim! Kodum: $myCode\n$url")
-        }
-        startActivity(Intent.createChooser(i, "Daveti paylaş"))
     }
 }
