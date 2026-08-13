@@ -15,6 +15,7 @@ import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.text.TextWatcher
 import android.view.inputmethod.InputMethodManager
 import android.widget.ArrayAdapter
 import android.widget.Button
@@ -31,9 +32,11 @@ class MainActivity : Activity() {
 
     private lateinit var prefs: android.content.SharedPreferences
     private val notes = mutableListOf<JSONObject>()
+    private val visibleNotes = mutableListOf<JSONObject>()
     private val displayItems = mutableListOf<String>()
     private lateinit var adapter: ArrayAdapter<String>
     private lateinit var input: EditText
+    private lateinit var searchInput: EditText
     private lateinit var statusText: TextView
     private lateinit var voiceBtn: Button
     private lateinit var textBtn: Button
@@ -46,6 +49,7 @@ class MainActivity : Activity() {
     private var recordStart = 0L
     private var player: MediaPlayer? = null
     private var pendingAction: (() -> Unit)? = null
+    private var query = ""
     private val handler = Handler(Looper.getMainLooper())
 
     private val BG = Color.parseColor("#fafafa")
@@ -69,6 +73,11 @@ class MainActivity : Activity() {
             text = "⚡ Yakala"
             textSize = 30f
             setTextColor(AMBER_DARK)
+        }
+        searchInput = EditText(this).apply {
+            hint = "🔍 Ara..."
+            setTextColor(TXT)
+            setHintTextColor(Color.GRAY)
         }
         input = EditText(this).apply {
             hint = "Aklına ne geldi?"
@@ -104,6 +113,7 @@ class MainActivity : Activity() {
         }
         val list = ListView(this)
         layout.addView(title)
+        layout.addView(searchInput)
         layout.addView(input)
         layout.addView(row)
         layout.addView(statusText)
@@ -114,6 +124,15 @@ class MainActivity : Activity() {
         adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, displayItems)
         updateList()
         list.adapter = adapter
+
+        searchInput.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                query = s.toString()
+                updateList()
+            }
+        })
 
         save.setOnClickListener {
             val t = input.text.toString().trim()
@@ -134,10 +153,10 @@ class MainActivity : Activity() {
             }
         }
         list.setOnItemClickListener { _, _, pos, _ ->
-            val n = notes[pos]
-            if (n.optString("type") == "voice") playNote(n)
+            val n = visibleNotes[pos]
+            if (n.optString("type") == "voice") playNote(n) else editDialog(n)
         }
-        list.setOnItemLongClickListener { _, _, pos, _ -> confirmDelete(pos); true }
+        list.setOnItemLongClickListener { _, _, pos, _ -> optionsDialog(pos); true }
 
         handleIncomingIntent(intent)
         handleQuick(intent)
@@ -187,8 +206,18 @@ class MainActivity : Activity() {
     }
 
     private fun updateList() {
+        visibleNotes.clear()
+        val q = query.trim().lowercase()
+        val filtered = notes.filter { q.isEmpty() || display(it).lowercase().contains(q) }
+        val sorted = filtered.sortedWith(
+            compareByDescending<JSONObject> { it.optBoolean("pinned") }
+                .thenByDescending { it.optLong("createdAt") }
+        )
+        visibleNotes.addAll(sorted)
         displayItems.clear()
-        displayItems.addAll(notes.map { display(it) })
+        displayItems.addAll(visibleNotes.map {
+            (if (it.optBoolean("pinned")) "📌 " else "") + display(it)
+        })
         adapter.notifyDataSetChanged()
     }
 
@@ -204,8 +233,54 @@ class MainActivity : Activity() {
         o.put("id", System.currentTimeMillis())
         o.put("type", "text")
         o.put("text", t)
+        o.put("pinned", false)
         o.put("createdAt", System.currentTimeMillis())
         notes.add(0, o)
+        persist()
+    }
+
+    private fun editDialog(n: JSONObject) {
+        val et = EditText(this).apply {
+            setText(n.optString("text"))
+            setTextColor(TXT)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("✏️ Notu düzenle")
+            .setView(et)
+            .setPositiveButton("Kaydet") { _, _ ->
+                n.put("text", et.text.toString().trim())
+                persist()
+            }
+            .setNegativeButton("Vazgeç", null)
+            .show()
+    }
+
+    private fun optionsDialog(pos: Int) {
+        val n = visibleNotes[pos]
+        val isVoice = n.optString("type") == "voice"
+        val pinned = n.optBoolean("pinned")
+        val items = mutableListOf<String>()
+        if (!isVoice) items.add("✏️ Düzenle")
+        if (isVoice) items.add("🔊 Çal")
+        items.add(if (pinned) "📌 Sabitlemeyi kaldır" else "📌 Sabitle")
+        items.add("🗑️ Sil")
+        AlertDialog.Builder(this)
+            .setTitle(display(n))
+            .setItems(items.toTypedArray()) { _, which ->
+                when (items[which]) {
+                    "✏️ Düzenle" -> editDialog(n)
+                    "🔊 Çal" -> playNote(n)
+                    "📌 Sabitle" -> { n.put("pinned", true); persist() }
+                    "📌 Sabitlemeyi kaldır" -> { n.put("pinned", false); persist() }
+                    "🗑️ Sil" -> deleteNote(n)
+                }
+            }
+            .show()
+    }
+
+    private fun deleteNote(n: JSONObject) {
+        if (n.optString("type") == "voice") File(n.optString("audioPath")).delete()
+        notes.remove(n)
         persist()
     }
 
@@ -270,6 +345,7 @@ class MainActivity : Activity() {
             o.put("audioPath", f.absolutePath)
             o.put("duration", (System.currentTimeMillis() - recordStart) / 1000)
             o.put("transcript", "")
+            o.put("pinned", false)
             o.put("createdAt", System.currentTimeMillis())
             notes.add(0, o)
             persist()
@@ -347,19 +423,5 @@ class MainActivity : Activity() {
         } catch (e: Exception) {
             Toast.makeText(this, "Oynatılamadı", Toast.LENGTH_SHORT).show()
         }
-    }
-
-    private fun confirmDelete(pos: Int) {
-        AlertDialog.Builder(this)
-            .setTitle("Notu sil")
-            .setMessage(display(notes[pos]))
-            .setPositiveButton("Sil") { _, _ ->
-                val n = notes[pos]
-                if (n.optString("type") == "voice") File(n.optString("audioPath")).delete()
-                notes.removeAt(pos)
-                persist()
-            }
-            .setNegativeButton("Vazgeç", null)
-            .show()
     }
 }
