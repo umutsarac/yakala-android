@@ -21,6 +21,9 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.text.TextWatcher
+import android.util.Base64
+import android.view.View
+import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
 import android.widget.ArrayAdapter
 import android.widget.Button
@@ -58,13 +61,17 @@ class MainActivity : Activity() {
     private var query = ""
     private val handler = Handler(Looper.getMainLooper())
 
-    private val BG = Color.parseColor("#fafafa")
+    private val REQ_EXPORT = 71
+    private val REQ_IMPORT = 72
+
+    private val isDark get() = prefs.getBoolean("dark", false)
+    private val BG get() = Color.parseColor(if (isDark) "#111827" else "#fafafa")
+    private val TITLE get() = Color.parseColor(if (isDark) "#f59e0b" else "#d97706")
+    private val TXT get() = Color.parseColor(if (isDark) "#f9fafb" else "#111827")
+    private val BTN get() = Color.parseColor(if (isDark) "#374151" else "#1e293b")
+    private val GREEN get() = Color.parseColor(if (isDark) "#4ade80" else "#16a34a")
     private val AMBER = Color.parseColor("#f59e0b")
-    private val AMBER_DARK = Color.parseColor("#d97706")
-    private val DARK = Color.parseColor("#1e293b")
     private val RED = Color.parseColor("#ef4444")
-    private val GREEN = Color.parseColor("#16a34a")
-    private val TXT = Color.parseColor("#111827")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -86,11 +93,24 @@ class MainActivity : Activity() {
             setPadding(40, 60, 40, 40)
             setBackgroundColor(BG)
         }
+        val titleRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+        }
         val title = TextView(this).apply {
             text = "⚡ Yakala"
             textSize = 30f
-            setTextColor(AMBER_DARK)
+            setTextColor(TITLE)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
+        val settingsBtn = TextView(this).apply {
+            text = "⚙️"
+            textSize = 26f
+            setPadding(20, 10, 0, 10)
+            setOnClickListener { settingsDialog() }
+        }
+        titleRow.addView(title)
+        titleRow.addView(settingsBtn)
         searchInput = EditText(this).apply {
             hint = "🔍 Ara..."
             setTextColor(TXT)
@@ -111,13 +131,13 @@ class MainActivity : Activity() {
         voiceBtn = Button(this).apply {
             text = "🎤 Ses"
             setTextColor(Color.WHITE)
-            setBackgroundColor(DARK)
+            setBackgroundColor(BTN)
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
         textBtn = Button(this).apply {
             text = "🗣️ Metin"
             setTextColor(Color.WHITE)
-            setBackgroundColor(DARK)
+            setBackgroundColor(BTN)
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
         row.addView(save)
@@ -129,7 +149,7 @@ class MainActivity : Activity() {
             setPadding(0, 16, 0, 16)
         }
         val list = ListView(this)
-        layout.addView(title)
+        layout.addView(titleRow)
         layout.addView(searchInput)
         layout.addView(input)
         layout.addView(row)
@@ -138,7 +158,13 @@ class MainActivity : Activity() {
         setContentView(layout)
 
         loadNotes()
-        adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, displayItems)
+        adapter = object : ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, displayItems) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val v = super.getView(position, convertView, parent)
+                (v as TextView).setTextColor(TXT)
+                return v
+            }
+        }
         updateList()
         list.adapter = adapter
 
@@ -184,6 +210,96 @@ class MainActivity : Activity() {
         setIntent(intent)
         handleIncomingIntent(intent)
         handleQuick(intent)
+    }
+
+    private fun settingsDialog() {
+        val items = arrayOf(
+            if (isDark) "☀️ Açık temaya geç" else "🌙 Karanlık temaya geç",
+            "📤 Yedekle (JSON)",
+            "📥 Geri yükle",
+            "ℹ️ Yakala v0.8"
+        )
+        AlertDialog.Builder(this)
+            .setTitle("⚙️ Ayarlar")
+            .setItems(items) { _, w ->
+                when (w) {
+                    0 -> { prefs.edit().putBoolean("dark", !isDark).apply(); recreate() }
+                    1 -> exportNotes()
+                    2 -> importNotes()
+                    3 -> Toast.makeText(this, "⚡ Yakala v0.8 — hızlı not + hatırlatıcı", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .show()
+    }
+
+    private fun exportNotes() {
+        val i = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/json"
+            putExtra(Intent.EXTRA_TITLE, "yakala-yedek.json")
+        }
+        startActivityForResult(i, REQ_EXPORT)
+    }
+
+    private fun importNotes() {
+        val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/json"
+        }
+        startActivityForResult(i, REQ_IMPORT)
+    }
+
+    private fun exportJson(): String {
+        val arr = JSONArray()
+        for (n in notes) {
+            val c = JSONObject(n.toString())
+            if (n.optString("type") == "voice") {
+                val f = File(n.optString("audioPath"))
+                if (f.exists()) {
+                    c.put("audioData", Base64.encodeToString(f.readBytes(), Base64.DEFAULT))
+                }
+            }
+            arr.put(c)
+        }
+        return arr.toString()
+    }
+
+    private fun importJson(text: String) {
+        val arr = JSONArray(text)
+        var count = 0
+        for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            if (o.optString("type") == "voice" && o.has("audioData")) {
+                val bytes = Base64.decode(o.getString("audioData"), Base64.DEFAULT)
+                val dir = File(filesDir, "notes"); dir.mkdirs()
+                val f = File(dir, "ses_${System.currentTimeMillis()}_$i.m4a")
+                f.writeBytes(bytes)
+                o.put("audioPath", f.absolutePath)
+                o.remove("audioData")
+            }
+            notes.add(0, o)
+            count++
+        }
+        persist()
+        Toast.makeText(this, "✅ $count not geri yüklendi", Toast.LENGTH_SHORT).show()
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (resultCode != RESULT_OK || data == null) return
+        val uri = data.data ?: return
+        when (requestCode) {
+            REQ_EXPORT -> {
+                contentResolver.openOutputStream(uri)?.use { it.write(exportJson().toByteArray()) }
+                Toast.makeText(this, "✅ Yedek kaydedildi", Toast.LENGTH_SHORT).show()
+            }
+            REQ_IMPORT -> {
+                val text = contentResolver.openInputStream(uri)?.use { String(it.readBytes()) } ?: return
+                try { importJson(text) } catch (e: Exception) {
+                    Toast.makeText(this, "Dosya okunamadı: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
     }
 
     private fun handleQuick(i: Intent?) {
@@ -426,7 +542,7 @@ class MainActivity : Activity() {
         try { recorder?.stop() } catch (_: Exception) {}
         recorder?.release(); recorder = null
         voiceBtn.text = "🎤 Ses"
-        voiceBtn.setBackgroundColor(DARK)
+        voiceBtn.setBackgroundColor(BTN)
         val f = currentFile
         if (f != null && f.exists() && f.length() > 0) {
             val o = JSONObject()
@@ -492,7 +608,7 @@ class MainActivity : Activity() {
         mode = 0
         recognizer?.destroy(); recognizer = null
         textBtn.text = "🗣️ Metin"
-        textBtn.setBackgroundColor(DARK)
+        textBtn.setBackgroundColor(BTN)
         val tr = transcript.toString().trim()
         if (tr.isNotEmpty()) {
             addTextNote(tr)
