@@ -10,6 +10,7 @@ import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.net.ConnectivityManager
@@ -25,7 +26,8 @@ import android.util.Base64
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
-import android.widget.ArrayAdapter
+import android.widget.AbsListView
+import android.widget.BaseAdapter
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -35,15 +37,17 @@ import android.widget.Toast
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : Activity() {
 
     private lateinit var prefs: android.content.SharedPreferences
     private val notes = mutableListOf<JSONObject>()
     private val visibleNotes = mutableListOf<JSONObject>()
-    private val displayItems = mutableListOf<String>()
-    private lateinit var adapter: ArrayAdapter<String>
+    private lateinit var adapter: NoteAdapter
     private lateinit var input: EditText
     private lateinit var searchInput: EditText
     private lateinit var statusText: TextView
@@ -65,9 +69,11 @@ class MainActivity : Activity() {
     private val REQ_IMPORT = 72
 
     private val isDark get() = prefs.getBoolean("dark", false)
-    private val BG get() = Color.parseColor(if (isDark) "#111827" else "#fafafa")
+    private val BG get() = Color.parseColor(if (isDark) "#111827" else "#f3f4f6")
+    private val SURFACE get() = Color.parseColor(if (isDark) "#1f2937" else "#ffffff")
     private val TITLE get() = Color.parseColor(if (isDark) "#f59e0b" else "#d97706")
     private val TXT get() = Color.parseColor(if (isDark) "#f9fafb" else "#111827")
+    private val META get() = Color.parseColor(if (isDark) "#9ca3af" else "#6b7280")
     private val BTN get() = Color.parseColor(if (isDark) "#374151" else "#1e293b")
     private val GREEN get() = Color.parseColor(if (isDark) "#4ade80" else "#16a34a")
     private val AMBER = Color.parseColor("#f59e0b")
@@ -90,7 +96,7 @@ class MainActivity : Activity() {
 
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(40, 60, 40, 40)
+            setPadding(40, 60, 40, 20)
             setBackgroundColor(BG)
         }
         val titleRow = LinearLayout(this).apply {
@@ -117,7 +123,7 @@ class MainActivity : Activity() {
             setHintTextColor(Color.GRAY)
         }
         input = EditText(this).apply {
-            hint = "Aklına ne geldi?"
+            hint = "Aklına ne geldi? (#etiket destekler)"
             setTextColor(TXT)
             setHintTextColor(Color.GRAY)
         }
@@ -148,7 +154,10 @@ class MainActivity : Activity() {
             setTextColor(GREEN)
             setPadding(0, 16, 0, 16)
         }
-        val list = ListView(this)
+        val list = ListView(this).apply {
+            divider = null
+            dividerHeight = 20
+        }
         layout.addView(titleRow)
         layout.addView(searchInput)
         layout.addView(input)
@@ -158,13 +167,7 @@ class MainActivity : Activity() {
         setContentView(layout)
 
         loadNotes()
-        adapter = object : ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, displayItems) {
-            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-                val v = super.getView(position, convertView, parent)
-                (v as TextView).setTextColor(TXT)
-                return v
-            }
-        }
+        adapter = NoteAdapter()
         updateList()
         list.adapter = adapter
 
@@ -205,6 +208,70 @@ class MainActivity : Activity() {
         handleQuick(intent)
     }
 
+    // ---- KART ADAPTÖRÜ ----
+    private inner class NoteAdapter : BaseAdapter() {
+        override fun getCount() = visibleNotes.size
+        override fun getItem(p: Int) = visibleNotes[p]
+        override fun getItemId(p: Int) = p.toLong()
+
+        override fun getView(p: Int, cv: View?, parent: ViewGroup): View {
+            val n = visibleNotes[p]
+            val isVoice = n.optString("type") == "voice"
+            val src = if (isVoice) n.optString("transcript") else n.optString("text")
+            val tags = Regex("#[\\p{L}0-9_]+").findAll(src).map { it.value }.toList()
+
+            val card = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(32, 28, 32, 24)
+                val gd = GradientDrawable()
+                gd.cornerRadius = 28f
+                gd.setColor(SURFACE)
+                if (!isDark) gd.setStroke(2, Color.parseColor("#e5e7eb"))
+                background = gd
+                layoutParams = AbsListView.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            }
+            val content = TextView(this@MainActivity).apply {
+                text = (if (isVoice) "🎤 " else "") + src.ifBlank { "Sesli not" }
+                setTextColor(TXT)
+                textSize = 16f
+                maxLines = 3
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                lineHeight = 56
+            }
+            val meta = TextView(this@MainActivity).apply {
+                val badges = buildString {
+                    if (n.optBoolean("pinned")) append("📌 ")
+                    if (n.optLong("reminderTime") > System.currentTimeMillis()) append("⏰ ")
+                    if (isVoice && n.optLong("duration") > 0) append("🎤 ${fmtDur(n.optLong("duration"))}  ")
+                    tags.forEach { append("$it  ") }
+                    append("• ${fmtDate(n.optLong("createdAt"))}")
+                }
+                text = badges
+                setTextColor(if (tags.isNotEmpty()) AMBER else META)
+                textSize = 12f
+                setPadding(0, 10, 0, 0)
+            }
+            card.addView(content)
+            card.addView(meta)
+            return card
+        }
+    }
+
+    private fun fmtDur(s: Long) = String.format("%02d:%02d", s / 60, s % 60)
+
+    private fun fmtDate(ts: Long): String {
+        if (ts <= 0) return ""
+        val now = Calendar.getInstance()
+        val d = Calendar.getInstance().apply { timeInMillis = ts }
+        val sameDay = d.get(Calendar.DATE) == now.get(Calendar.DATE) &&
+            d.get(Calendar.MONTH) == now.get(Calendar.MONTH) &&
+            d.get(Calendar.YEAR) == now.get(Calendar.YEAR)
+        val pattern = if (sameDay) "HH:mm" else "d MMM HH:mm"
+        return SimpleDateFormat(pattern, Locale("tr")).format(Date(ts))
+    }
+
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -217,7 +284,7 @@ class MainActivity : Activity() {
             if (isDark) "☀️ Açık temaya geç" else "🌙 Karanlık temaya geç",
             "📤 Yedekle (JSON)",
             "📥 Geri yükle",
-            "ℹ️ Yakala v0.8"
+            "ℹ️ Yakala v0.9"
         )
         AlertDialog.Builder(this)
             .setTitle("⚙️ Ayarlar")
@@ -226,7 +293,7 @@ class MainActivity : Activity() {
                     0 -> { prefs.edit().putBoolean("dark", !isDark).apply(); recreate() }
                     1 -> exportNotes()
                     2 -> importNotes()
-                    3 -> Toast.makeText(this, "⚡ Yakala v0.8 — hızlı not + hatırlatıcı", Toast.LENGTH_SHORT).show()
+                    3 -> Toast.makeText(this, "⚡ Yakala v0.9 — kart tasarım", Toast.LENGTH_SHORT).show()
                 }
             }
             .show()
@@ -255,9 +322,7 @@ class MainActivity : Activity() {
             val c = JSONObject(n.toString())
             if (n.optString("type") == "voice") {
                 val f = File(n.optString("audioPath"))
-                if (f.exists()) {
-                    c.put("audioData", Base64.encodeToString(f.readBytes(), Base64.DEFAULT))
-                }
+                if (f.exists()) c.put("audioData", Base64.encodeToString(f.readBytes(), Base64.DEFAULT))
             }
             arr.put(c)
         }
@@ -350,10 +415,6 @@ class MainActivity : Activity() {
                 .thenByDescending { it.optLong("createdAt") }
         )
         visibleNotes.addAll(sorted)
-        displayItems.clear()
-        displayItems.addAll(visibleNotes.map {
-            (if (it.optBoolean("pinned")) "📌 " else "") + display(it)
-        })
         adapter.notifyDataSetChanged()
     }
 
@@ -533,7 +594,7 @@ class MainActivity : Activity() {
     private fun tick() {
         if (mode != 1) return
         val s = (System.currentTimeMillis() - recordStart) / 1000
-        statusText.text = "🔴 ${String.format("%02d:%02d", s / 60, s % 60)} — bitirmek için ■ Bitir"
+        statusText.text = "🔴 ${fmtDur(s)} — bitirmek için ■ Bitir"
         handler.postDelayed({ tick() }, 1000)
     }
 
