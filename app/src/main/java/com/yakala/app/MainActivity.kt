@@ -15,6 +15,7 @@ import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.view.inputmethod.InputMethodManager
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
@@ -39,7 +40,7 @@ class MainActivity : Activity() {
 
     private var recorder: MediaRecorder? = null
     private var recognizer: SpeechRecognizer? = null
-    private var mode = 0 // 0=yok 1=ses 2=metin
+    private var mode = 0
     private var currentFile: File? = null
     private var transcript = StringBuilder()
     private var recordStart = 0L
@@ -139,12 +140,26 @@ class MainActivity : Activity() {
         list.setOnItemLongClickListener { _, _, pos, _ -> confirmDelete(pos); true }
 
         handleIncomingIntent(intent)
+        handleQuick(intent)
     }
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         setIntent(intent)
         handleIncomingIntent(intent)
+        handleQuick(intent)
+    }
+
+    private fun handleQuick(i: Intent?) {
+        when (i?.getStringExtra("quick")) {
+            "audio" -> ensurePermission { startAudio() }
+            "stt" -> ensurePermission { startText() }
+            "text" -> {
+                input.requestFocus()
+                val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+                imm.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
+            }
+        }
     }
 
     private fun handleIncomingIntent(i: Intent?) {
@@ -212,7 +227,6 @@ class MainActivity : Activity() {
         } else Toast.makeText(this, "Mikrofon izni gerekli", Toast.LENGTH_SHORT).show()
     }
 
-    // ---- MOD 1: SES KAYDI ----
     private fun startAudio() {
         try {
             val dir = File(filesDir, "notes"); dir.mkdirs()
@@ -263,7 +277,6 @@ class MainActivity : Activity() {
         } else statusText.text = ""
     }
 
-    // ---- MOD 2: KONUŞ → METİN ----
     private fun startText() {
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             Toast.makeText(this, "Cihazda konuşma tanıma yok", Toast.LENGTH_LONG).show(); return

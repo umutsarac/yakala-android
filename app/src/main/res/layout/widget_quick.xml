@@ -1,0 +1,17 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="wrap_content"
+    android:orientation="horizontal" android:background="@drawable/widget_bg"
+    android:padding="14dp" android:gravity="center_vertical">
+    <TextView android:id="@+id/w_title" android:layout_width="0dp" android:layout_weight="1"
+        android:layout_height="wrap_content" android:text="⚡ Yakala"
+        android:textColor="#f59e0b" android:textSize="16sp" android:textStyle="bold" />
+    <TextView android:id="@+id/w_text" android:layout_width="wrap_content"
+        android:layout_height="wrap_content" android:text="📝" android:textSize="22sp"
+        android:padding="10dp" />
+    <TextView android:id="@+id/w_audio" android:layout_width="wrap_content"
+        android:layout_height="wrap_content" android:text="🎤" android:textSize="22sp"
+        android:padding="10dp" />
+    <TextView android:id="@+id/w_stt" android:layout_width="wrap_content"
+        android:layout_height="wrap_content" android:text="🗣️" android:textSize="22sp"
+        android:padding="10dp" />
+</LinearLayout>
