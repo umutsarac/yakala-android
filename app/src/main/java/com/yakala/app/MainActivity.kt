@@ -301,6 +301,7 @@ class MainActivity : Activity() {
 
         handleIncomingIntent(intent)
         handleQuick(intent)
+        handleInviteIntent(intent)
 
         pollHandler.postDelayed(pollRunnable, 3000)
     }
@@ -461,6 +462,7 @@ class MainActivity : Activity() {
         if (serverUrl.isEmpty()) { setupServerDialog(); return }
         val items = arrayOf(
             "🪪 Kodum: $myCode (kopyala)",
+            "📨 Davet linki paylaş",
             "➕ Arkadaş ekle",
             "👥 Arkadaşlarım (${myFriends.size})",
             "🔗 Sunucu / isim değiştir"
@@ -472,9 +474,10 @@ class MainActivity : Activity() {
                         .setPrimaryClip(ClipData.newPlainText("code", myCode))
                     Toast.makeText(this, "🪪 Kod kopyalandı: $myCode", Toast.LENGTH_SHORT).show()
                 }
-                1 -> addFriendDialog()
-                2 -> friendsListDialog()
-                3 -> setupServerDialog()
+                1 -> shareInvite()
+                2 -> addFriendDialog()
+                3 -> friendsListDialog()
+                4 -> setupServerDialog()
             }
         }.show()
     }
@@ -515,7 +518,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(24), dp(16), dp(24), 0)
         }
-        val codeEt = EditText(this).apply { hint = "Arkadaşın kodu (6 hane)" }
+        val codeEt = EditText(this).apply { hint = "Arkadaşın kodu (6 hane)"; setText(Regex("\\d{6}").find(clipText())?.value ?: "") }
         val nameEt = EditText(this).apply { hint = "Arkadaşın adı" }
         ll.addView(codeEt); ll.addView(nameEt)
         AlertDialog.Builder(this)
@@ -675,6 +678,7 @@ class MainActivity : Activity() {
         setIntent(intent)
         handleIncomingIntent(intent)
         handleQuick(intent)
+        handleInviteIntent(intent)
     }
 
     private fun settingsDialog() {
@@ -1079,5 +1083,38 @@ class MainActivity : Activity() {
         } catch (e: Exception) {
             Toast.makeText(this, "Oynatılamadı", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    private fun clipText(): String {
+        val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        val c = cm.primaryClip
+        return if (c != null && c.itemCount > 0) c.getItemAt(0).text?.toString() ?: "" else ""
+    }
+
+    private fun handleInviteIntent(i: Intent?) {
+        val u = i?.data ?: return
+        if (u.scheme == "yakala" && u.host == "invite") {
+            val code = u.getQueryParameter("code") ?: return
+            val name = u.getQueryParameter("name") ?: "Arkadaş"
+            if (code == myCode) return
+            if (serverUrl.isEmpty()) { setupServerDialog(); return }
+            Thread {
+                conn("/users/$code/requests/$myCode", "PUT", JSONObject().put("name", myName).toString())
+                conn("/users/$myCode/friends/$code", "PUT",
+                    JSONObject().put("name", name).put("status", "ask").toString())
+                pollHandler.post {
+                    Toast.makeText(this@MainActivity, "📨 $name'a arkadaş isteği gönderildi", Toast.LENGTH_SHORT).show()
+                }
+            }.start()
+        }
+    }
+
+    private fun shareInvite() {
+        val url = "https://umutsarac.github.io/yakala-android/invite.html?code=$myCode&name=$myName"
+        val i = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, "⚡ Yakala ile birbirimize not gönderelim! Kodum: $myCode\n$url")
+        }
+        startActivity(Intent.createChooser(i, "Daveti paylaş"))
     }
 }

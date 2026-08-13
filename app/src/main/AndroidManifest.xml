@@ -23,6 +23,12 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="yakala" android:host="invite" />
+            </intent-filter>
         </activity>
         <receiver android:name=".QuickWidget" android:exported="true">
             <intent-filter>
