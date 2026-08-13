@@ -4,9 +4,11 @@ import android.Manifest
 import android.app.Activity
 import android.app.AlarmManager
 import android.app.AlertDialog
+import android.app.DatePickerDialog
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.TimePickerDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -21,6 +23,7 @@ import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.text.InputType
 import android.text.TextWatcher
 import android.util.Base64
 import android.view.View
@@ -68,16 +71,20 @@ class MainActivity : Activity() {
     private val REQ_EXPORT = 71
     private val REQ_IMPORT = 72
 
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+    private fun roundBg(color: Int, radiusDp: Int = 14): GradientDrawable =
+        GradientDrawable().apply { cornerRadius = dp(radiusDp).toFloat(); setColor(color) }
+
     private val isDark get() = prefs.getBoolean("dark", false)
-    private val BG get() = Color.parseColor(if (isDark) "#111827" else "#f3f4f6")
+    private val BG get() = Color.parseColor(if (isDark) "#141a22" else "#f6f7f9")
     private val SURFACE get() = Color.parseColor(if (isDark) "#1f2937" else "#ffffff")
-    private val TITLE get() = Color.parseColor(if (isDark) "#f59e0b" else "#d97706")
-    private val TXT get() = Color.parseColor(if (isDark) "#f9fafb" else "#111827")
-    private val META get() = Color.parseColor(if (isDark) "#9ca3af" else "#6b7280")
-    private val BTN get() = Color.parseColor(if (isDark) "#374151" else "#1e293b")
-    private val GREEN get() = Color.parseColor(if (isDark) "#4ade80" else "#16a34a")
-    private val AMBER = Color.parseColor("#f59e0b")
-    private val RED = Color.parseColor("#ef4444")
+    private val TITLE get() = Color.parseColor(if (isDark) "#e8b464" else "#c08a3e")
+    private val TXT get() = Color.parseColor(if (isDark) "#f3f4f6" else "#1f2937")
+    private val META get() = Color.parseColor(if (isDark) "#9aa5b1" else "#8a94a0")
+    private val BTN_SOFT get() = Color.parseColor(if (isDark) "#3d4a5c" else "#64748b")
+    private val AMBER_SOFT get() = Color.parseColor(if (isDark) "#d9a441" else "#e2a750")
+    private val RED_SOFT get() = Color.parseColor("#d97b7b")
+    private val GREEN_SOFT get() = Color.parseColor(if (isDark) "#7fd7a4" else "#4c9a6b")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -96,7 +103,7 @@ class MainActivity : Activity() {
 
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(40, 60, 40, 20)
+            setPadding(dp(20), dp(28), dp(20), dp(10))
             setBackgroundColor(BG)
         }
         val titleRow = LinearLayout(this).apply {
@@ -105,58 +112,90 @@ class MainActivity : Activity() {
         }
         val title = TextView(this).apply {
             text = "⚡ Yakala"
-            textSize = 30f
+            textSize = 28f
             setTextColor(TITLE)
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
+        val searchToggle = TextView(this).apply {
+            text = "🔍"
+            textSize = 22f
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+            setOnClickListener {
+                if (searchInput.visibility == View.VISIBLE) {
+                    searchInput.visibility = View.GONE
+                    searchInput.setText("")
+                } else {
+                    searchInput.visibility = View.VISIBLE
+                    searchInput.requestFocus()
+                    val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+                    imm.showSoftInput(searchInput, InputMethodManager.SHOW_IMPLICIT)
+                }
+            }
+        }
         val settingsBtn = TextView(this).apply {
             text = "⚙️"
-            textSize = 26f
-            setPadding(20, 10, 0, 10)
+            textSize = 24f
+            setPadding(dp(10), dp(6), 0, dp(6))
             setOnClickListener { settingsDialog() }
         }
         titleRow.addView(title)
+        titleRow.addView(searchToggle)
         titleRow.addView(settingsBtn)
+
         searchInput = EditText(this).apply {
             hint = "🔍 Ara..."
             setTextColor(TXT)
-            setHintTextColor(Color.GRAY)
+            setHintTextColor(META)
+            background = roundBg(SURFACE)
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            visibility = View.GONE
         }
         input = EditText(this).apply {
-            hint = "Aklına ne geldi? (#etiket destekler)"
+            hint = "Aklına ne geldi?\n(ilk satır başlık olur, zorunlu değil)"
             setTextColor(TXT)
-            setHintTextColor(Color.GRAY)
+            setHintTextColor(META)
+            background = roundBg(SURFACE)
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            minLines = 3
+            maxLines = 6
+            gravity = android.view.Gravity.TOP
+            inputType = InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
         }
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val lp = { LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+            marginStart = dp(5); marginEnd = dp(5)
+        } }
         val save = Button(this).apply {
             text = "✓ Kaydet"
             setTextColor(Color.WHITE)
-            setBackgroundColor(AMBER)
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            background = roundBg(AMBER_SOFT)
+            layoutParams = lp()
         }
         voiceBtn = Button(this).apply {
             text = "🎤 Ses"
             setTextColor(Color.WHITE)
-            setBackgroundColor(BTN)
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            background = roundBg(BTN_SOFT)
+            layoutParams = lp()
         }
         textBtn = Button(this).apply {
             text = "🗣️ Metin"
             setTextColor(Color.WHITE)
-            setBackgroundColor(BTN)
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            background = roundBg(BTN_SOFT)
+            layoutParams = lp()
         }
         row.addView(save)
         row.addView(voiceBtn)
         row.addView(textBtn)
         statusText = TextView(this).apply {
-            textSize = 15f
-            setTextColor(GREEN)
-            setPadding(0, 16, 0, 16)
+            textSize = 14f
+            setTextColor(GREEN_SOFT)
+            setPadding(0, dp(10), 0, dp(6))
         }
         val list = ListView(this).apply {
             divider = null
-            dividerHeight = 20
+            dividerHeight = dp(12)
         }
         layout.addView(titleRow)
         layout.addView(searchInput)
@@ -208,7 +247,6 @@ class MainActivity : Activity() {
         handleQuick(intent)
     }
 
-    // ---- KART ADAPTÖRÜ ----
     private inner class NoteAdapter : BaseAdapter() {
         override fun getCount() = visibleNotes.size
         override fun getItem(p: Int) = visibleNotes[p]
@@ -222,24 +260,46 @@ class MainActivity : Activity() {
 
             val card = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(32, 28, 32, 24)
+                setPadding(dp(18), dp(14), dp(18), dp(12))
                 val gd = GradientDrawable()
-                gd.cornerRadius = 28f
+                gd.cornerRadius = dp(18).toFloat()
                 gd.setColor(SURFACE)
-                if (!isDark) gd.setStroke(2, Color.parseColor("#e5e7eb"))
+                if (!isDark) gd.setStroke(2, Color.parseColor("#e8eaee"))
                 background = gd
                 layoutParams = AbsListView.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
                 )
             }
-            val content = TextView(this@MainActivity).apply {
-                text = (if (isVoice) "🎤 " else "") + src.ifBlank { "Sesli not" }
-                setTextColor(TXT)
-                textSize = 16f
-                maxLines = 3
-                ellipsize = android.text.TextUtils.TruncateAt.END
-                lineHeight = 56
+
+            val lines = src.split("\n", limit = 2)
+            if (!isVoice && lines.size == 2 && lines[0].isNotBlank()) {
+                val t = TextView(this@MainActivity).apply {
+                    text = lines[0]
+                    setTextColor(TXT)
+                    textSize = 16f
+                    paint.isFakeBoldText = true
+                }
+                val b = TextView(this@MainActivity).apply {
+                    text = lines[1]
+                    setTextColor(META)
+                    textSize = 14f
+                    maxLines = 3
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    setPadding(0, dp(4), 0, 0)
+                }
+                card.addView(t)
+                card.addView(b)
+            } else {
+                val c = TextView(this@MainActivity).apply {
+                    text = (if (isVoice) "🎤 " else "") + src.ifBlank { "Sesli not" }
+                    setTextColor(TXT)
+                    textSize = 15f
+                    maxLines = 3
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                }
+                card.addView(c)
             }
+
             val meta = TextView(this@MainActivity).apply {
                 val badges = buildString {
                     if (n.optBoolean("pinned")) append("📌 ")
@@ -249,11 +309,10 @@ class MainActivity : Activity() {
                     append("• ${fmtDate(n.optLong("createdAt"))}")
                 }
                 text = badges
-                setTextColor(if (tags.isNotEmpty()) AMBER else META)
+                setTextColor(if (tags.isNotEmpty()) AMBER_SOFT else META)
                 textSize = 12f
-                setPadding(0, 10, 0, 0)
+                setPadding(0, dp(6), 0, 0)
             }
-            card.addView(content)
             card.addView(meta)
             return card
         }
@@ -284,7 +343,7 @@ class MainActivity : Activity() {
             if (isDark) "☀️ Açık temaya geç" else "🌙 Karanlık temaya geç",
             "📤 Yedekle (JSON)",
             "📥 Geri yükle",
-            "ℹ️ Yakala v0.9"
+            "ℹ️ Yakala v1.0"
         )
         AlertDialog.Builder(this)
             .setTitle("⚙️ Ayarlar")
@@ -293,7 +352,7 @@ class MainActivity : Activity() {
                     0 -> { prefs.edit().putBoolean("dark", !isDark).apply(); recreate() }
                     1 -> exportNotes()
                     2 -> importNotes()
-                    3 -> Toast.makeText(this, "⚡ Yakala v0.9 — kart tasarım", Toast.LENGTH_SHORT).show()
+                    3 -> Toast.makeText(this, "⚡ Yakala v1.0", Toast.LENGTH_SHORT).show()
                 }
             }
             .show()
@@ -392,7 +451,7 @@ class MainActivity : Activity() {
     private fun display(n: JSONObject): String {
         val base = if (n.optString("type") == "voice")
             "🎤 " + n.optString("transcript").ifBlank { "Sesli not" }
-        else "📝 " + n.optString("text")
+        else "📝 " + n.optString("text").replace("\n", " — ")
         val rem = if (n.optLong("reminderTime") > System.currentTimeMillis()) " ⏰" else ""
         return base + rem
     }
@@ -440,6 +499,8 @@ class MainActivity : Activity() {
         val et = EditText(this).apply {
             setText(n.optString("text"))
             setTextColor(TXT)
+            minLines = 3
+            gravity = android.view.Gravity.TOP
         }
         AlertDialog.Builder(this)
             .setTitle("✏️ Notu düzenle")
@@ -481,32 +542,30 @@ class MainActivity : Activity() {
         val options = arrayOf(
             "⚡ 1 dakika sonra (test)",
             "⏱ 1 saat sonra",
-            "🌆 Bu akşam 20:00",
-            "🌅 Yarın 09:00",
+            "🌅 09:00",
+            "☀️ 13:00",
+            "🌆 20:00",
+            "📅 Tarih ve saat seç",
             "🗑 Hatırlatmayı kaldır"
         )
         AlertDialog.Builder(this)
             .setTitle("⏰ Ne zaman hatırlatayım?")
             .setItems(options) { _, w ->
-                if (w == 4) {
-                    n.remove("reminderTime")
-                    persist()
-                    cancelAlarm(n)
-                    Toast.makeText(this, "Hatırlatma kaldırıldı", Toast.LENGTH_SHORT).show()
-                    return@setItems
+                when (w) {
+                    6 -> {
+                        n.remove("reminderTime"); persist(); cancelAlarm(n)
+                        Toast.makeText(this, "Hatırlatma kaldırıldı", Toast.LENGTH_SHORT).show()
+                        return@setItems
+                    }
+                    5 -> { pickCustom(n); return@setItems }
                 }
                 val cal = Calendar.getInstance()
                 when (w) {
                     0 -> cal.timeInMillis = System.currentTimeMillis() + 60_000
                     1 -> cal.timeInMillis = System.currentTimeMillis() + 3_600_000
-                    2 -> {
-                        cal.set(Calendar.HOUR_OF_DAY, 20); cal.set(Calendar.MINUTE, 0); cal.set(Calendar.SECOND, 0)
-                        if (cal.timeInMillis <= System.currentTimeMillis()) cal.add(Calendar.DAY_OF_YEAR, 1)
-                    }
-                    3 -> {
-                        cal.add(Calendar.DAY_OF_YEAR, 1)
-                        cal.set(Calendar.HOUR_OF_DAY, 9); cal.set(Calendar.MINUTE, 0); cal.set(Calendar.SECOND, 0)
-                    }
+                    2 -> setClassic(cal, 9)
+                    3 -> setClassic(cal, 13)
+                    4 -> setClassic(cal, 20)
                 }
                 n.put("reminderTime", cal.timeInMillis)
                 persist()
@@ -514,6 +573,35 @@ class MainActivity : Activity() {
                 Toast.makeText(this, "⏰ Hatırlatma kuruldu", Toast.LENGTH_SHORT).show()
             }
             .show()
+    }
+
+    private fun setClassic(cal: Calendar, hour: Int) {
+        cal.set(Calendar.HOUR_OF_DAY, hour)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        if (cal.timeInMillis <= System.currentTimeMillis()) cal.add(Calendar.DAY_OF_YEAR, 1)
+    }
+
+    private fun pickCustom(n: JSONObject) {
+        val cal = Calendar.getInstance()
+        DatePickerDialog(this, { _, y, m, d ->
+            cal.set(Calendar.YEAR, y); cal.set(Calendar.MONTH, m); cal.set(Calendar.DAY_OF_MONTH, d)
+            TimePickerDialog(this, { _, hh, mm ->
+                cal.set(Calendar.HOUR_OF_DAY, hh)
+                cal.set(Calendar.MINUTE, mm)
+                cal.set(Calendar.SECOND, 0)
+                cal.set(Calendar.MILLISECOND, 0)
+                if (cal.timeInMillis <= System.currentTimeMillis()) {
+                    Toast.makeText(this, "Geçmiş zaman seçilemez", Toast.LENGTH_SHORT).show()
+                    return@TimePickerDialog
+                }
+                n.put("reminderTime", cal.timeInMillis)
+                persist()
+                setAlarm(n)
+                Toast.makeText(this, "⏰ Hatırlatma kuruldu", Toast.LENGTH_SHORT).show()
+            }, cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE), true).show()
+        }, cal.get(Calendar.YEAR), cal.get(Calendar.MONTH), cal.get(Calendar.DAY_OF_MONTH)).show()
     }
 
     private fun setAlarm(n: JSONObject) {
@@ -583,7 +671,7 @@ class MainActivity : Activity() {
             mode = 1
             recordStart = System.currentTimeMillis()
             voiceBtn.text = "■ Bitir"
-            voiceBtn.setBackgroundColor(RED)
+            voiceBtn.background = roundBg(RED_SOFT)
             statusText.text = "🔴 Kaydediliyor... bitirmek için ■ Bitir"
             tick()
         } catch (e: Exception) {
@@ -603,7 +691,7 @@ class MainActivity : Activity() {
         try { recorder?.stop() } catch (_: Exception) {}
         recorder?.release(); recorder = null
         voiceBtn.text = "🎤 Ses"
-        voiceBtn.setBackgroundColor(BTN)
+        voiceBtn.background = roundBg(BTN_SOFT)
         val f = currentFile
         if (f != null && f.exists() && f.length() > 0) {
             val o = JSONObject()
@@ -661,7 +749,7 @@ class MainActivity : Activity() {
         recognizer!!.startListening(ri)
         mode = 2
         textBtn.text = "■ Bitir"
-        textBtn.setBackgroundColor(RED)
+        textBtn.background = roundBg(RED_SOFT)
         statusText.text = "🎙️ Dinliyorum, konuş..."
     }
 
@@ -669,7 +757,7 @@ class MainActivity : Activity() {
         mode = 0
         recognizer?.destroy(); recognizer = null
         textBtn.text = "🗣️ Metin"
-        textBtn.setBackgroundColor(BTN)
+        textBtn.background = roundBg(BTN_SOFT)
         val tr = transcript.toString().trim()
         if (tr.isNotEmpty()) {
             addTextNote(tr)
