@@ -99,7 +99,8 @@ class MainActivity : Activity() {
     private val RED_SOFT get() = Color.parseColor("#d97b7b")
     private val GREEN_SOFT get() = Color.parseColor(if (isDark) "#7fd7a4" else "#4c9a6b")
 
-    private val serverUrl get() = prefs.getString("server", "") ?: ""
+    private val DEFAULT_SERVER = "https://yakala-7ba1c-default-rtdb.europe-west1.firebasedatabase.app"
+    private val serverUrl get() = prefs.getString("server", null) ?: DEFAULT_SERVER
     private val myCode: String get() {
         var c = prefs.getString("myCode", null)
         if (c == null) { c = (100000..999999).random().toString(); prefs.edit().putString("myCode", c).apply() }
@@ -303,6 +304,7 @@ class MainActivity : Activity() {
         handleInviteIntent(intent)
 
         pollHandler.postDelayed(pollRunnable, 3000)
+        Thread { conn("/users/$myCode/name", "PUT", "\"$myName\"") }.start()
     }
 
     override fun onNewIntent(intent: Intent?) {
