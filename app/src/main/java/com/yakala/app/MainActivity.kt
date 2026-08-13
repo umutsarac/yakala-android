@@ -2,13 +2,18 @@ package com.yakala.app
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlarmManager
 import android.app.AlertDialog
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.net.ConnectivityManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -27,6 +32,7 @@ import android.widget.Toast
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.util.Calendar
 
 class MainActivity : Activity() {
 
@@ -63,6 +69,17 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = getSharedPreferences("yakala", MODE_PRIVATE)
+
+        if (Build.VERSION.SDK_INT >= 26) {
+            val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+            nm.createNotificationChannel(
+                NotificationChannel("yakala_rem", "Hatırlatmalar", NotificationManager.IMPORTANCE_HIGH)
+            )
+        }
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 101)
+        }
 
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -191,10 +208,13 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun display(n: JSONObject): String =
-        if (n.optString("type") == "voice")
+    private fun display(n: JSONObject): String {
+        val base = if (n.optString("type") == "voice")
             "🎤 " + n.optString("transcript").ifBlank { "Sesli not" }
         else "📝 " + n.optString("text")
+        val rem = if (n.optLong("reminderTime") > System.currentTimeMillis()) " ⏰" else ""
+        return base + rem
+    }
 
     private fun loadNotes() {
         notes.clear()
@@ -262,6 +282,7 @@ class MainActivity : Activity() {
         val items = mutableListOf<String>()
         if (!isVoice) items.add("✏️ Düzenle")
         if (isVoice) items.add("🔊 Çal")
+        items.add("⏰ Hatırlat")
         items.add(if (pinned) "📌 Sabitlemeyi kaldır" else "📌 Sabitle")
         items.add("🗑️ Sil")
         AlertDialog.Builder(this)
@@ -270,6 +291,7 @@ class MainActivity : Activity() {
                 when (items[which]) {
                     "✏️ Düzenle" -> editDialog(n)
                     "🔊 Çal" -> playNote(n)
+                    "⏰ Hatırlat" -> scheduleReminder(n)
                     "📌 Sabitle" -> { n.put("pinned", true); persist() }
                     "📌 Sabitlemeyi kaldır" -> { n.put("pinned", false); persist() }
                     "🗑️ Sil" -> deleteNote(n)
@@ -278,7 +300,73 @@ class MainActivity : Activity() {
             .show()
     }
 
+    private fun scheduleReminder(n: JSONObject) {
+        val options = arrayOf(
+            "⚡ 1 dakika sonra (test)",
+            "⏱ 1 saat sonra",
+            "🌆 Bu akşam 20:00",
+            "🌅 Yarın 09:00",
+            "🗑 Hatırlatmayı kaldır"
+        )
+        AlertDialog.Builder(this)
+            .setTitle("⏰ Ne zaman hatırlatayım?")
+            .setItems(options) { _, w ->
+                if (w == 4) {
+                    n.remove("reminderTime")
+                    persist()
+                    cancelAlarm(n)
+                    Toast.makeText(this, "Hatırlatma kaldırıldı", Toast.LENGTH_SHORT).show()
+                    return@setItems
+                }
+                val cal = Calendar.getInstance()
+                when (w) {
+                    0 -> cal.timeInMillis = System.currentTimeMillis() + 60_000
+                    1 -> cal.timeInMillis = System.currentTimeMillis() + 3_600_000
+                    2 -> {
+                        cal.set(Calendar.HOUR_OF_DAY, 20); cal.set(Calendar.MINUTE, 0); cal.set(Calendar.SECOND, 0)
+                        if (cal.timeInMillis <= System.currentTimeMillis()) cal.add(Calendar.DAY_OF_YEAR, 1)
+                    }
+                    3 -> {
+                        cal.add(Calendar.DAY_OF_YEAR, 1)
+                        cal.set(Calendar.HOUR_OF_DAY, 9); cal.set(Calendar.MINUTE, 0); cal.set(Calendar.SECOND, 0)
+                    }
+                }
+                n.put("reminderTime", cal.timeInMillis)
+                persist()
+                setAlarm(n)
+                Toast.makeText(this, "⏰ Hatırlatma kuruldu", Toast.LENGTH_SHORT).show()
+            }
+            .show()
+    }
+
+    private fun setAlarm(n: JSONObject) {
+        val time = n.optLong("reminderTime")
+        if (time <= 0) return
+        val id = n.optLong("id").toInt()
+        val i = Intent(this, ReminderReceiver::class.java).apply {
+            putExtra("text", display(n))
+            putExtra("id", id)
+        }
+        val pi = PendingIntent.getBroadcast(
+            this, id, i,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val am = getSystemService(ALARM_SERVICE) as AlarmManager
+        am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, time, pi)
+    }
+
+    private fun cancelAlarm(n: JSONObject) {
+        val id = n.optLong("id").toInt()
+        val i = Intent(this, ReminderReceiver::class.java)
+        val pi = PendingIntent.getBroadcast(
+            this, id, i,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        (getSystemService(ALARM_SERVICE) as AlarmManager).cancel(pi)
+    }
+
     private fun deleteNote(n: JSONObject) {
+        cancelAlarm(n)
         if (n.optString("type") == "voice") File(n.optString("audioPath")).delete()
         notes.remove(n)
         persist()
@@ -286,8 +374,8 @@ class MainActivity : Activity() {
 
     private fun hasInternet(): Boolean {
         val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
-        val n = cm.activeNetwork ?: return false
-        return cm.getNetworkCapabilities(n)?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+        val net = cm.activeNetwork ?: return false
+        return cm.getNetworkCapabilities(net)?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
     }
 
     private fun ensurePermission(action: () -> Unit) {
@@ -299,7 +387,9 @@ class MainActivity : Activity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 100 && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             pendingAction?.invoke(); pendingAction = null
-        } else Toast.makeText(this, "Mikrofon izni gerekli", Toast.LENGTH_SHORT).show()
+        } else if (requestCode != 101) {
+            Toast.makeText(this, "Mikrofon izni gerekli", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun startAudio() {
