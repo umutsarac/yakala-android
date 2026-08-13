@@ -408,7 +408,8 @@ class MainActivity : Activity() {
             v.put("id", key)
             fNotes.add(0, v)
             if (v.optBoolean("pending")) newPending = true
-            if (v.optString("kind") == "reminder") showReminderNotif(v)
+            val remAt = v.optLong("reminderAt")
+            if (remAt > System.currentTimeMillis()) scheduleFriendReminder(v, remAt)
             Thread { conn("/users/$myCode/inbox/$key", "DELETE") }.start()
         }
         if (map.isNotEmpty()) {
@@ -435,7 +436,7 @@ class MainActivity : Activity() {
     private fun updateFList() {
         fDisplay.clear()
         fDisplay.addAll(fNotes.map { n ->
-            val p = if (n.optBoolean("pending")) "⏳ " else if (n.optString("kind") == "reminder") "🔔 " else ""
+            val p = if (n.optBoolean("pending")) "⏳ " else if (n.optLong("reminderAt") > 0) "🔔 " else ""
             "$p👤 ${n.optString("fromName")}: ${n.optString("text")}"
         })
         fAdapter.notifyDataSetChanged()
@@ -631,18 +632,22 @@ class MainActivity : Activity() {
         AlertDialog.Builder(this).setTitle("📤 Kime gönderelim?").setItems(names.toTypedArray()) { _, w ->
             val code = codes[w]
             val tname = myFriends[code]?.optString("name") ?: code
-            val types = arrayOf("⚡ Hemen gönder", "⏰ Belirli zamanda gönder", "🔔 Hatırlatıcı olarak gönder")
-            AlertDialog.Builder(this).setTitle("$tname için gönderim türü").setItems(types) { _, t ->
-                when (t) {
-                    0 -> doSend(code, text, "now", 0L)
-                    1 -> pickSendTime(code, text, "timed")
-                    2 -> pickSendTime(code, text, "reminder")
-                }
+            AlertDialog.Builder(this).setTitle("$tname — not ne zaman ulaşsın?").setItems(arrayOf("⚡ Hemen gönder", "⏰ Zaman seçerek gönder")) { _, d ->
+                if (d == 0) askReminder(code, text, 0L)
+                else pickTime { at -> askReminder(code, text, at) }
             }.show()
         }.show()
     }
 
-    private fun pickSendTime(code: String, text: String, kind: String) {
+    private fun askReminder(code: String, text: String, deliveryAt: Long) {
+        val tname = myFriends[code]?.optString("name") ?: code
+        AlertDialog.Builder(this).setTitle("🔔 $tname için hatırlatıcı eklensin mi?").setItems(arrayOf("🔔 Hatırlatıcı ekle", "➡️ Hatırlatıcısız gönder")) { _, r ->
+            if (r == 0) pickTime { remAt -> doSend(code, text, deliveryAt, remAt) }
+            else doSend(code, text, deliveryAt, 0L)
+        }.show()
+    }
+
+    private fun pickTime(onPick: (Long) -> Unit) {
         val cal = Calendar.getInstance()
         DatePickerDialog(this, { _, y, m, d ->
             cal.set(Calendar.YEAR, y); cal.set(Calendar.MONTH, m); cal.set(Calendar.DAY_OF_MONTH, d)
@@ -652,46 +657,42 @@ class MainActivity : Activity() {
                 if (cal.timeInMillis <= System.currentTimeMillis() + 60_000) {
                     Toast.makeText(this, "Gelecek bir zaman seç", Toast.LENGTH_SHORT).show(); return@TimePickerDialog
                 }
-                doSend(code, text, kind, cal.timeInMillis)
+                onPick(cal.timeInMillis)
             }, cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE), true).show()
         }, cal.get(Calendar.YEAR), cal.get(Calendar.MONTH), cal.get(Calendar.DAY_OF_MONTH)).show()
     }
 
-    private fun doSend(code: String, text: String, kind: String, at: Long) {
+    private fun doSend(code: String, text: String, deliveryAt: Long, reminderAt: Long) {
         val tname = myFriends[code]?.optString("name") ?: code
-        if (kind == "now") {
-            val pending = myGrants[code] != "full"
-            val o = JSONObject().apply {
-                put("from", myCode); put("fromName", myName)
-                put("text", text); put("time", System.currentTimeMillis())
-                put("pending", pending); put("kind", "now")
-            }
-            Thread {
-                val ok = conn("/users/$code/inbox", "POST", o.toString()) != null
-                pollHandler.post { Toast.makeText(this, if (!ok) "❌ Gönderilemedi" else "📤 $tname'a gönderildi", Toast.LENGTH_SHORT).show() }
-            }.start()
+        if (deliveryAt <= 0L) {
+            postInbox(code, text, "now", reminderAt)
+            Toast.makeText(this, "📤 $tname'a gönderildi" + (if (reminderAt > 0) " + 🔔 ${fmtDate(reminderAt)}" else ""), Toast.LENGTH_SHORT).show()
         } else {
             val job = JSONObject().apply {
-                put("to", code); put("text", text); put("kind", kind); put("at", at)
+                put("to", code); put("text", text); put("at", deliveryAt); put("reminderAt", reminderAt)
             }
             scheduledSends.add(job); saveScheduled()
-            val lbl = if (kind == "reminder") "🔔 Hatırlatıcı" else "⏰ Zamanlı gönderim"
-            Toast.makeText(this, "$lbl kuruldu: ${fmtDate(at)}", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "⏰ ${fmtDate(deliveryAt)}'de ulaşacak" + (if (reminderAt > 0) " + 🔔 ${fmtDate(reminderAt)}" else ""), Toast.LENGTH_LONG).show()
         }
+    }
+
+    private fun postInbox(code: String, text: String, kind: String, reminderAt: Long) {
+        val pending = myGrants[code] != "full"
+        val o = JSONObject().apply {
+            put("from", myCode); put("fromName", myName)
+            put("text", text); put("time", System.currentTimeMillis())
+            put("pending", pending); put("kind", kind)
+            if (reminderAt > 0) put("reminderAt", reminderAt)
+        }
+        Thread { conn("/users/$code/inbox", "POST", o.toString()) }.start()
     }
 
     private val sendTicker = object : Runnable {
         override fun run() {
             val now = System.currentTimeMillis()
-            val due = scheduledSends.filter { it.optLong("at") <= now }
+            val due = scheduledSends.filter { it.optLong("at") <= now }.toList()
             due.forEach { job ->
-                val to = job.optString("to"); val text = job.optString("text"); val kind = job.optString("kind")
-                val pending = myGrants[to] != "full"
-                val o = JSONObject().apply {
-                    put("from", myCode); put("fromName", myName)
-                    put("text", text); put("time", now); put("pending", pending); put("kind", kind)
-                }
-                Thread { conn("/users/$to/inbox", "POST", o.toString()) }.start()
+                postInbox(job.optString("to"), job.optString("text"), "timed", job.optLong("reminderAt"))
                 scheduledSends.remove(job)
             }
             if (due.isNotEmpty()) saveScheduled()
@@ -1192,6 +1193,18 @@ class MainActivity : Activity() {
         } catch (e: Exception) {
             Toast.makeText(this, "Oynatılamadı", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    private fun scheduleFriendReminder(v: JSONObject, at: Long) {
+        val id = v.optString("id").hashCode()
+        val i = Intent(this, ReminderReceiver::class.java).apply {
+            putExtra("text", "🔔 " + v.optString("fromName") + ": " + v.optString("text"))
+            putExtra("id", id)
+        }
+        val pi = PendingIntent.getBroadcast(this, id, i,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        (getSystemService(ALARM_SERVICE) as AlarmManager)
+            .setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
     }
 
     private fun showReminderNotif(v: JSONObject) {
