@@ -9,6 +9,8 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.TimePickerDialog
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -40,6 +42,8 @@ import android.widget.Toast
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -51,6 +55,9 @@ class MainActivity : Activity() {
     private val notes = mutableListOf<JSONObject>()
     private val visibleNotes = mutableListOf<JSONObject>()
     private lateinit var adapter: NoteAdapter
+    private val fNotes = mutableListOf<JSONObject>()
+    private val fDisplay = mutableListOf<String>()
+    private lateinit var fAdapter: android.widget.ArrayAdapter<String>
     private lateinit var input: EditText
     private lateinit var searchInput: EditText
     private lateinit var statusText: TextView
@@ -68,11 +75,16 @@ class MainActivity : Activity() {
     private var query = ""
     private val handler = Handler(Looper.getMainLooper())
 
+    private val myFriends = mutableMapOf<String, JSONObject>()
+    private val myGrants = mutableMapOf<String, String>()
+    private val seenInbox = HashSet<String>()
+    private val handledRequests = HashSet<String>()
+
     private val REQ_EXPORT = 71
     private val REQ_IMPORT = 72
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
-    private fun roundBg(color: Int, radiusDp: Int = 14): GradientDrawable =
+    private fun roundBg(color: Int, radiusDp: Int = 14) =
         GradientDrawable().apply { cornerRadius = dp(radiusDp).toFloat(); setColor(color) }
 
     private val isDark get() = prefs.getBoolean("dark", false)
@@ -85,6 +97,14 @@ class MainActivity : Activity() {
     private val AMBER_SOFT get() = Color.parseColor(if (isDark) "#d9a441" else "#e2a750")
     private val RED_SOFT get() = Color.parseColor("#d97b7b")
     private val GREEN_SOFT get() = Color.parseColor(if (isDark) "#7fd7a4" else "#4c9a6b")
+
+    private val serverUrl get() = prefs.getString("server", "") ?: ""
+    private val myCode: String get() {
+        var c = prefs.getString("myCode", null)
+        if (c == null) { c = (100000..999999).random().toString(); prefs.edit().putString("myCode", c).apply() }
+        return c
+    }
+    private val myName get() = prefs.getString("myName", null) ?: "Yakala-$myCode"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -103,7 +123,7 @@ class MainActivity : Activity() {
 
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(28), dp(20), dp(10))
+            setPadding(dp(20), dp(24), dp(20), dp(10))
             setBackgroundColor(BG)
         }
         val titleRow = LinearLayout(this).apply {
@@ -112,14 +132,20 @@ class MainActivity : Activity() {
         }
         val title = TextView(this).apply {
             text = "⚡ Yakala"
-            textSize = 28f
+            textSize = 26f
             setTextColor(TITLE)
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
+        val friendsBtn = TextView(this).apply {
+            text = "👥"
+            textSize = 20f
+            setPadding(dp(8), dp(6), dp(8), dp(6))
+            setOnClickListener { friendsDialog() }
+        }
         val searchToggle = TextView(this).apply {
             text = "🔍"
-            textSize = 22f
-            setPadding(dp(10), dp(6), dp(10), dp(6))
+            textSize = 20f
+            setPadding(dp(8), dp(6), dp(8), dp(6))
             setOnClickListener {
                 if (searchInput.visibility == View.VISIBLE) {
                     searchInput.visibility = View.GONE
@@ -127,96 +153,126 @@ class MainActivity : Activity() {
                 } else {
                     searchInput.visibility = View.VISIBLE
                     searchInput.requestFocus()
-                    val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
-                    imm.showSoftInput(searchInput, InputMethodManager.SHOW_IMPLICIT)
                 }
             }
         }
         val settingsBtn = TextView(this).apply {
             text = "⚙️"
-            textSize = 24f
-            setPadding(dp(10), dp(6), 0, dp(6))
+            textSize = 22f
+            setPadding(dp(8), dp(6), 0, dp(6))
             setOnClickListener { settingsDialog() }
         }
         titleRow.addView(title)
+        titleRow.addView(friendsBtn)
         titleRow.addView(searchToggle)
         titleRow.addView(settingsBtn)
 
         searchInput = EditText(this).apply {
             hint = "🔍 Ara..."
-            setTextColor(TXT)
-            setHintTextColor(META)
+            setTextColor(TXT); setHintTextColor(META)
             background = roundBg(SURFACE)
-            setPadding(dp(16), dp(12), dp(16), dp(12))
+            setPadding(dp(16), dp(10), dp(16), dp(10))
             visibility = View.GONE
         }
         input = EditText(this).apply {
             hint = "Aklına ne geldi?\n(ilk satır başlık olur, zorunlu değil)"
-            setTextColor(TXT)
-            setHintTextColor(META)
+            setTextColor(TXT); setHintTextColor(META)
             background = roundBg(SURFACE)
-            setPadding(dp(16), dp(14), dp(16), dp(14))
-            minLines = 3
-            maxLines = 6
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            minLines = 3; maxLines = 6
             gravity = android.view.Gravity.TOP
-            inputType = InputType.TYPE_CLASS_TEXT or
-                InputType.TYPE_TEXT_FLAG_MULTI_LINE or
-                InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(8) }
+        }
+        val bulletRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(10) }
+        }
+        listOf("•", "✅", "📞", "🛒", "💡").forEach { s ->
+            val b = TextView(this).apply {
+                text = s
+                textSize = 16f
+                setPadding(dp(10), dp(4), dp(10), dp(4))
+                background = roundBg(SURFACE, 10)
+                setOnClickListener {
+                    val cur = input.text.toString()
+                    input.setText(if (cur.isEmpty()) "$s " else "$cur\n$s ")
+                    input.setSelection(input.text.length)
+                }
+            }
+            val lp = LinearLayout.LayoutParams(WRAP, WRAP).apply { marginEnd = dp(6) }
+            bulletRow.addView(b, lp)
         }
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val lp = { LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+        val mkLp = { LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
             marginStart = dp(5); marginEnd = dp(5)
         } }
         val save = Button(this).apply {
-            text = "✓ Kaydet"
-            setTextColor(Color.WHITE)
-            background = roundBg(AMBER_SOFT)
-            layoutParams = lp()
+            text = "✓ Kaydet"; setTextColor(Color.WHITE)
+            background = roundBg(AMBER_SOFT); layoutParams = mkLp()
         }
         voiceBtn = Button(this).apply {
-            text = "🎤 Ses"
-            setTextColor(Color.WHITE)
-            background = roundBg(BTN_SOFT)
-            layoutParams = lp()
+            text = "🎤 Ses"; setTextColor(Color.WHITE)
+            background = roundBg(BTN_SOFT); layoutParams = mkLp()
         }
         textBtn = Button(this).apply {
-            text = "🗣️ Metin"
-            setTextColor(Color.WHITE)
-            background = roundBg(BTN_SOFT)
-            layoutParams = lp()
+            text = "🗣️ Metin"; setTextColor(Color.WHITE)
+            background = roundBg(BTN_SOFT); layoutParams = mkLp()
         }
-        row.addView(save)
-        row.addView(voiceBtn)
-        row.addView(textBtn)
+        row.addView(save); row.addView(voiceBtn); row.addView(textBtn)
         statusText = TextView(this).apply {
-            textSize = 14f
-            setTextColor(GREEN_SOFT)
-            setPadding(0, dp(10), 0, dp(6))
+            textSize = 13f; setTextColor(GREEN_SOFT)
+            setPadding(0, dp(8), 0, dp(4))
         }
-        val list = ListView(this).apply {
-            divider = null
-            dividerHeight = dp(12)
+        val h1 = TextView(this).apply {
+            text = "📋 NOTLARIM"; textSize = 12f; setTextColor(META)
+            setPadding(0, 0, 0, dp(6))
         }
+        val listMine = ListView(this).apply { divider = null; dividerHeight = dp(10) }
+        val h2 = TextView(this).apply {
+            text = "👥 ARKADAŞ NOTLARI"; textSize = 12f; setTextColor(META)
+            setPadding(0, dp(8), 0, dp(6))
+        }
+        val listFriends = ListView(this).apply { divider = null; dividerHeight = dp(8) }
+
         layout.addView(titleRow)
         layout.addView(searchInput)
         layout.addView(input)
+        layout.addView(bulletRow)
         layout.addView(row)
         layout.addView(statusText)
-        layout.addView(list)
+        layout.addView(h1)
+        layout.addView(listMine, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        layout.addView(h2)
+        layout.addView(listFriends, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(layout)
 
         loadNotes()
         adapter = NoteAdapter()
         updateList()
-        list.adapter = adapter
+        listMine.adapter = adapter
+
+        loadFNotes()
+        fAdapter = object : android.widget.ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, fDisplay) {
+            override fun getView(position: Int, cv: View?, parent: ViewGroup): View {
+                val v = super.getView(position, cv, parent)
+                (v as TextView).setTextColor(TXT)
+                return v
+            }
+        }
+        updateFList()
+        listFriends.adapter = fAdapter
+
+        listFriends.setOnItemClickListener { _, _, pos, _ -> friendDialog(pos) }
 
         searchInput.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-            override fun afterTextChanged(s: android.text.Editable?) {
-                query = s.toString()
-                updateList()
-            }
+            override fun afterTextChanged(s: android.text.Editable?) { query = s.toString(); updateList() }
         })
 
         save.setOnClickListener {
@@ -237,16 +293,315 @@ class MainActivity : Activity() {
                 else -> ensurePermission { startText() }
             }
         }
-        list.setOnItemClickListener { _, _, pos, _ ->
+        listMine.setOnItemClickListener { _, _, pos, _ ->
             val n = visibleNotes[pos]
             if (n.optString("type") == "voice") playNote(n) else editDialog(n)
         }
-        list.setOnItemLongClickListener { _, _, pos, _ -> optionsDialog(pos); true }
+        listMine.setOnItemLongClickListener { _, _, pos, _ -> optionsDialog(pos); true }
 
         handleIncomingIntent(intent)
         handleQuick(intent)
+
+        pollHandler.postDelayed(pollRunnable, 3000)
     }
 
+    private val WRAP = LinearLayout.LayoutParams.WRAP_CONTENT
+
+    // ==== AĞ (Firebase REST) ====
+    private fun conn(path: String, method: String, body: String? = null): String? = try {
+        val c = URL("$serverUrl$path.json").openConnection() as HttpURLConnection
+        c.requestMethod = method
+        c.connectTimeout = 6000; c.readTimeout = 6000
+        if (body != null) {
+            c.doOutput = true
+            c.setRequestProperty("Content-Type", "application/json")
+            c.outputStream.use { it.write(body.toByteArray()) }
+        }
+        val s = if (c.responseCode in 200..299)
+            c.inputStream.readBytes().toString(Charsets.UTF_8) else null
+        c.disconnect(); s
+    } catch (e: Exception) { null }
+
+    private val pollHandler = Handler(Looper.getMainLooper())
+    private val pollRunnable = object : Runnable {
+        override fun run() { poll(); pollHandler.postDelayed(this, 20000) }
+    }
+
+    private fun poll() {
+        if (serverUrl.isEmpty()) return
+        Thread {
+            val rq = conn("/users/$myCode/requests", "GET")
+            val gr = conn("/users/$myCode/grants", "GET")
+            val ib = conn("/users/$myCode/inbox", "GET")
+            val fr = conn("/users/$myCode/friends", "GET")
+            pollHandler.post {
+                handleFriends(fr); handleGrants(gr); handleRequests(rq); handleInbox(ib)
+            }
+        }.start()
+    }
+
+    private fun parseMap(raw: String?): Map<String, JSONObject> {
+        val out = mutableMapOf<String, JSONObject>()
+        if (raw == null || raw == "null") return out
+        try {
+            val o = JSONObject(raw)
+            val k = o.keys()
+            while (k.hasNext()) { val key = k.next(); out[key] = o.getJSONObject(key) }
+        } catch (_: Exception) {}
+        return out
+    }
+
+    private fun handleFriends(raw: String?) {
+        myFriends.clear()
+        myFriends.putAll(parseMap(raw))
+    }
+
+    private fun handleGrants(raw: String?) {
+        myGrants.clear()
+        for ((k, v) in parseMap(raw)) myGrants[k] = v.optString("status", "ask")
+    }
+
+    private fun handleRequests(raw: String?) {
+        for ((code, v) in parseMap(raw)) {
+            if (code in handledRequests) continue
+            handledRequests.add(code)
+            val name = v.optString("name", code)
+            AlertDialog.Builder(this)
+                .setTitle("👥 Arkadaşlık isteği")
+                .setMessage("$name seni arkadaş olarak eklemek istiyor.\nİzin seviyesi seç:")
+                .setPositiveButton("✅ Tam izin") { _, _ -> acceptFriend(code, name, "full") }
+                .setNeutralButton("❓ Her seferinde sor") { _, _ -> acceptFriend(code, name, "ask") }
+                .setNegativeButton("Reddet") { _, _ ->
+                    Thread { conn("/users/$myCode/requests/$code", "DELETE") }.start()
+                }
+                .show()
+        }
+    }
+
+    private fun acceptFriend(code: String, name: String, status: String) {
+        Thread {
+            conn("/users/$myCode/friends/$code", "PUT",
+                JSONObject().put("name", name).put("status", status).toString())
+            conn("/users/$code/grants/$myCode", "PUT",
+                JSONObject().put("status", status).put("name", myName).toString())
+            conn("/users/$myCode/requests/$code", "DELETE")
+        }.start()
+        Toast.makeText(this, "✅ $name eklendi", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun handleInbox(raw: String?) {
+        var newPending = false
+        for ((key, v) in parseMap(raw)) {
+            if (key in seenInbox) continue
+            seenInbox.add(key)
+            v.put("id", key)
+            fNotes.add(0, v)
+            if (v.optBoolean("pending")) newPending = true
+            Thread { conn("/users/$myCode/inbox/$key", "DELETE") }.start()
+        }
+        if (parseMap(raw).isNotEmpty()) {
+            saveFNotes(); updateFList()
+            if (newPending) Toast.makeText(this, "📬 Yeni not isteği var", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun loadFNotes() {
+        fNotes.clear()
+        val raw = prefs.getString("fnotes", null) ?: return
+        try {
+            val a = JSONArray(raw)
+            for (i in 0 until a.length()) fNotes.add(a.getJSONObject(i))
+        } catch (_: Exception) {}
+    }
+
+    private fun saveFNotes() {
+        val a = JSONArray()
+        fNotes.forEach { a.put(it) }
+        prefs.edit().putString("fnotes", a.toString()).apply()
+    }
+
+    private fun updateFList() {
+        fDisplay.clear()
+        fDisplay.addAll(fNotes.map { n ->
+            val p = if (n.optBoolean("pending")) "⏳ " else ""
+            "$p👤 ${n.optString("fromName")}: ${n.optString("text")}"
+        })
+        fAdapter.notifyDataSetChanged()
+    }
+
+    private fun friendDialog(pos: Int) {
+        val n = fNotes[pos]
+        if (n.optBoolean("pending")) {
+            AlertDialog.Builder(this)
+                .setTitle("👤 " + n.optString("fromName"))
+                .setMessage(n.optString("text"))
+                .setPositiveButton("✅ Kabul et") { _, _ ->
+                    n.put("pending", false); saveFNotes(); updateFList()
+                }
+                .setNegativeButton("❌ Reddet") { _, _ ->
+                    fNotes.removeAt(pos); saveFNotes(); updateFList()
+                }
+                .show()
+        } else {
+            AlertDialog.Builder(this)
+                .setTitle("👤 " + n.optString("fromName"))
+                .setMessage(n.optString("text"))
+                .setPositiveButton("📋 Notlarıma ekle") { _, _ ->
+                    addTextNote("👤 " + n.optString("fromName") + ": " + n.optString("text"))
+                }
+                .setNegativeButton("🗑 Sil") { _, _ ->
+                    fNotes.removeAt(pos); saveFNotes(); updateFList()
+                }
+                .show()
+        }
+    }
+
+    // ==== ARKADAŞ MENÜSÜ ====
+    private fun friendsDialog() {
+        if (serverUrl.isEmpty()) { setupServerDialog(); return }
+        val items = arrayOf(
+            "🪪 Kodum: $myCode (kopyala)",
+            "➕ Arkadaş ekle",
+            "👥 Arkadaşlarım (${myFriends.size})",
+            "🔗 Sunucu / isim değiştir"
+        )
+        AlertDialog.Builder(this).setTitle("👥 Arkadaşlar").setItems(items) { _, w ->
+            when (w) {
+                0 -> {
+                    (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager)
+                        .setPrimaryClip(ClipData.newPlainText("code", myCode))
+                    Toast.makeText(this, "🪪 Kod kopyalandı: $myCode", Toast.LENGTH_SHORT).show()
+                }
+                1 -> addFriendDialog()
+                2 -> friendsListDialog()
+                3 -> setupServerDialog()
+            }
+        }.show()
+    }
+
+    private fun setupServerDialog() {
+        val ll = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(16), dp(24), 0)
+        }
+        val urlEt = EditText(this).apply {
+            hint = "Firebase URL (https://...firebasedatabase.app)"
+            setText(serverUrl)
+        }
+        val nameEt = EditText(this).apply {
+            hint = "Görünen adın"
+            setText(if (myName.startsWith("Yakala-")) "" else myName)
+        }
+        ll.addView(urlEt); ll.addView(nameEt)
+        AlertDialog.Builder(this)
+            .setTitle("🔗 Sunucu kurulumu")
+            .setView(ll)
+            .setPositiveButton("Kaydet") { _, _ ->
+                prefs.edit()
+                    .putString("server", urlEt.text.toString().trim().trimEnd('/'))
+                    .putString("myName", nameEt.text.toString().trim().ifEmpty { "Yakala-$myCode" })
+                    .apply()
+                Thread {
+                    conn("/users/$myCode/name", "PUT", "\"$myName\"")
+                }.start()
+                Toast.makeText(this, "✅ Kaydedildi", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Vazgeç", null)
+            .show()
+    }
+
+    private fun addFriendDialog() {
+        val ll = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(16), dp(24), 0)
+        }
+        val codeEt = EditText(this).apply { hint = "Arkadaşın kodu (6 hane)" }
+        val nameEt = EditText(this).apply { hint = "Arkadaşın adı" }
+        ll.addView(codeEt); ll.addView(nameEt)
+        AlertDialog.Builder(this)
+            .setTitle("➕ Arkadaş ekle")
+            .setView(ll)
+            .setPositiveButton("Ekle") { _, _ ->
+                val code = codeEt.text.toString().trim()
+                val name = nameEt.text.toString().trim().ifEmpty { "Arkadaş-$code" }
+                if (code.length < 4) { Toast.makeText(this, "Geçersiz kod", Toast.LENGTH_SHORT).show(); return@setPositiveButton }
+                Thread {
+                    conn("/users/$code/requests/$myCode", "PUT",
+                        JSONObject().put("name", myName).toString())
+                    conn("/users/$myCode/friends/$code", "PUT",
+                        JSONObject().put("name", name).put("status", "ask").toString())
+                    pollHandler.post { Toast.makeText(this, "📨 İstek gönderildi", Toast.LENGTH_SHORT).show() }
+                }.start()
+            }
+            .setNegativeButton("Vazgeç", null)
+            .show()
+    }
+
+    private fun friendsListDialog() {
+        if (myFriends.isEmpty()) { Toast.makeText(this, "Henüz arkadaş yok", Toast.LENGTH_SHORT).show(); return }
+        val codes = myFriends.keys.toList()
+        val names = codes.map { c ->
+            val st = if (myFriends[c]?.optString("status") == "full") "tam izin" else "sorar"
+            "${myFriends[c]?.optString("name") ?: c} ($st)"
+        }
+        AlertDialog.Builder(this).setTitle("👥 Arkadaşlarım").setItems(names.toTypedArray()) { _, w ->
+            val code = codes[w]
+            val name = myFriends[code]?.optString("name") ?: code
+            AlertDialog.Builder(this)
+                .setTitle(name)
+                .setItems(arrayOf("✅ Tam izin ver", "❓ Her seferinde sor", "🗑 Arkadaşı sil")) { _, s ->
+                    Thread {
+                        when (s) {
+                            0 -> {
+                                conn("/users/$myCode/friends/$code", "PUT",
+                                    JSONObject().put("name", name).put("status", "full").toString())
+                                conn("/users/$code/grants/$myCode", "PUT",
+                                    JSONObject().put("status", "full").put("name", myName).toString())
+                            }
+                            1 -> {
+                                conn("/users/$myCode/friends/$code", "PUT",
+                                    JSONObject().put("name", name).put("status", "ask").toString())
+                                conn("/users/$code/grants/$myCode", "PUT",
+                                    JSONObject().put("status", "ask").put("name", myName).toString())
+                            }
+                            2 -> {
+                                conn("/users/$myCode/friends/$code", "DELETE")
+                                conn("/users/$code/grants/$myCode", "DELETE")
+                            }
+                        }
+                        pollHandler.post { poll() }
+                    }.start()
+                }
+                .show()
+        }.show()
+    }
+
+    private fun sendToFriend(text: String) {
+        if (serverUrl.isEmpty()) { Toast.makeText(this, "Önce 👥 menüsünden sunucu kur", Toast.LENGTH_LONG).show(); return }
+        if (myFriends.isEmpty()) { Toast.makeText(this, "Önce arkadaş ekle", Toast.LENGTH_SHORT).show(); return }
+        val codes = myFriends.keys.toList()
+        val names = codes.map { c ->
+            val g = if (myGrants[c] == "full") "direkt gider" else "onaya düşer"
+            "${myFriends[c]?.optString("name") ?: c} — $g"
+        }
+        AlertDialog.Builder(this).setTitle("📤 Kime gönderelim?").setItems(names.toTypedArray()) { _, w ->
+            val code = codes[w]
+            val pending = myGrants[code] != "full"
+            val o = JSONObject().apply {
+                put("from", myCode); put("fromName", myName)
+                put("text", text); put("time", System.currentTimeMillis())
+                put("pending", pending)
+            }
+            Thread {
+                conn("/users/$code/inbox", "POST", o.toString())
+                pollHandler.post {
+                    Toast.makeText(this, if (pending) "📤 Gönderildi (onaya düştü)" else "📤 Gönderildi", Toast.LENGTH_SHORT).show()
+                }
+            }.start()
+        }.show()
+    }
+
+    // ==== NOT ADAPTÖRÜ ====
     private inner class NoteAdapter : BaseAdapter() {
         override fun getCount() = visibleNotes.size
         override fun getItem(p: Int) = visibleNotes[p]
@@ -270,50 +625,35 @@ class MainActivity : Activity() {
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
                 )
             }
-
             val lines = src.split("\n", limit = 2)
             if (!isVoice && lines.size == 2 && lines[0].isNotBlank()) {
-                val t = TextView(this@MainActivity).apply {
-                    text = lines[0]
-                    setTextColor(TXT)
-                    textSize = 16f
-                    paint.isFakeBoldText = true
-                }
-                val b = TextView(this@MainActivity).apply {
-                    text = lines[1]
-                    setTextColor(META)
-                    textSize = 14f
-                    maxLines = 3
-                    ellipsize = android.text.TextUtils.TruncateAt.END
+                card.addView(TextView(this@MainActivity).apply {
+                    text = lines[0]; setTextColor(TXT); textSize = 16f; paint.isFakeBoldText = true
+                })
+                card.addView(TextView(this@MainActivity).apply {
+                    text = lines[1]; setTextColor(META); textSize = 14f
+                    maxLines = 3; ellipsize = android.text.TextUtils.TruncateAt.END
                     setPadding(0, dp(4), 0, 0)
-                }
-                card.addView(t)
-                card.addView(b)
+                })
             } else {
-                val c = TextView(this@MainActivity).apply {
+                card.addView(TextView(this@MainActivity).apply {
                     text = (if (isVoice) "🎤 " else "") + src.ifBlank { "Sesli not" }
-                    setTextColor(TXT)
-                    textSize = 15f
-                    maxLines = 3
-                    ellipsize = android.text.TextUtils.TruncateAt.END
-                }
-                card.addView(c)
+                    setTextColor(TXT); textSize = 15f
+                    maxLines = 3; ellipsize = android.text.TextUtils.TruncateAt.END
+                })
             }
-
-            val meta = TextView(this@MainActivity).apply {
-                val badges = buildString {
+            card.addView(TextView(this@MainActivity).apply {
+                text = buildString {
                     if (n.optBoolean("pinned")) append("📌 ")
                     if (n.optLong("reminderTime") > System.currentTimeMillis()) append("⏰ ")
                     if (isVoice && n.optLong("duration") > 0) append("🎤 ${fmtDur(n.optLong("duration"))}  ")
                     tags.forEach { append("$it  ") }
                     append("• ${fmtDate(n.optLong("createdAt"))}")
                 }
-                text = badges
                 setTextColor(if (tags.isNotEmpty()) AMBER_SOFT else META)
                 textSize = 12f
                 setPadding(0, dp(6), 0, 0)
-            }
-            card.addView(meta)
+            })
             return card
         }
     }
@@ -327,8 +667,7 @@ class MainActivity : Activity() {
         val sameDay = d.get(Calendar.DATE) == now.get(Calendar.DATE) &&
             d.get(Calendar.MONTH) == now.get(Calendar.MONTH) &&
             d.get(Calendar.YEAR) == now.get(Calendar.YEAR)
-        val pattern = if (sameDay) "HH:mm" else "d MMM HH:mm"
-        return SimpleDateFormat(pattern, Locale("tr")).format(Date(ts))
+        return SimpleDateFormat(if (sameDay) "HH:mm" else "d MMM HH:mm", Locale("tr")).format(Date(ts))
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -343,19 +682,16 @@ class MainActivity : Activity() {
             if (isDark) "☀️ Açık temaya geç" else "🌙 Karanlık temaya geç",
             "📤 Yedekle (JSON)",
             "📥 Geri yükle",
-            "ℹ️ Yakala v1.0"
+            "ℹ️ Yakala v1.1"
         )
-        AlertDialog.Builder(this)
-            .setTitle("⚙️ Ayarlar")
-            .setItems(items) { _, w ->
-                when (w) {
-                    0 -> { prefs.edit().putBoolean("dark", !isDark).apply(); recreate() }
-                    1 -> exportNotes()
-                    2 -> importNotes()
-                    3 -> Toast.makeText(this, "⚡ Yakala v1.0", Toast.LENGTH_SHORT).show()
-                }
+        AlertDialog.Builder(this).setTitle("⚙️ Ayarlar").setItems(items) { _, w ->
+            when (w) {
+                0 -> { prefs.edit().putBoolean("dark", !isDark).apply(); recreate() }
+                1 -> exportNotes()
+                2 -> importNotes()
+                3 -> Toast.makeText(this, "⚡ Yakala v1.1 — arkadaş sistemi", Toast.LENGTH_SHORT).show()
             }
-            .show()
+        }.show()
     }
 
     private fun exportNotes() {
@@ -469,11 +805,10 @@ class MainActivity : Activity() {
         visibleNotes.clear()
         val q = query.trim().lowercase()
         val filtered = notes.filter { q.isEmpty() || display(it).lowercase().contains(q) }
-        val sorted = filtered.sortedWith(
+        visibleNotes.addAll(filtered.sortedWith(
             compareByDescending<JSONObject> { it.optBoolean("pinned") }
                 .thenByDescending { it.optLong("createdAt") }
-        )
-        visibleNotes.addAll(sorted)
+        ))
         adapter.notifyDataSetChanged()
     }
 
@@ -487,30 +822,20 @@ class MainActivity : Activity() {
     private fun addTextNote(t: String) {
         val o = JSONObject()
         o.put("id", System.currentTimeMillis())
-        o.put("type", "text")
-        o.put("text", t)
-        o.put("pinned", false)
-        o.put("createdAt", System.currentTimeMillis())
+        o.put("type", "text"); o.put("text", t)
+        o.put("pinned", false); o.put("createdAt", System.currentTimeMillis())
         notes.add(0, o)
         persist()
     }
 
     private fun editDialog(n: JSONObject) {
         val et = EditText(this).apply {
-            setText(n.optString("text"))
-            setTextColor(TXT)
-            minLines = 3
-            gravity = android.view.Gravity.TOP
+            setText(n.optString("text")); setTextColor(TXT)
+            minLines = 3; gravity = android.view.Gravity.TOP
         }
-        AlertDialog.Builder(this)
-            .setTitle("✏️ Notu düzenle")
-            .setView(et)
-            .setPositiveButton("Kaydet") { _, _ ->
-                n.put("text", et.text.toString().trim())
-                persist()
-            }
-            .setNegativeButton("Vazgeç", null)
-            .show()
+        AlertDialog.Builder(this).setTitle("✏️ Notu düzenle").setView(et)
+            .setPositiveButton("Kaydet") { _, _ -> n.put("text", et.text.toString().trim()); persist() }
+            .setNegativeButton("Vazgeç", null).show()
     }
 
     private fun optionsDialog(pos: Int) {
@@ -520,36 +845,30 @@ class MainActivity : Activity() {
         val items = mutableListOf<String>()
         if (!isVoice) items.add("✏️ Düzenle")
         if (isVoice) items.add("🔊 Çal")
+        items.add("📤 Arkadaşa gönder")
         items.add("⏰ Hatırlat")
         items.add(if (pinned) "📌 Sabitlemeyi kaldır" else "📌 Sabitle")
         items.add("🗑️ Sil")
-        AlertDialog.Builder(this)
-            .setTitle(display(n))
-            .setItems(items.toTypedArray()) { _, which ->
-                when (items[which]) {
-                    "✏️ Düzenle" -> editDialog(n)
-                    "🔊 Çal" -> playNote(n)
-                    "⏰ Hatırlat" -> scheduleReminder(n)
-                    "📌 Sabitle" -> { n.put("pinned", true); persist() }
-                    "📌 Sabitlemeyi kaldır" -> { n.put("pinned", false); persist() }
-                    "🗑️ Sil" -> deleteNote(n)
-                }
+        AlertDialog.Builder(this).setTitle(display(n)).setItems(items.toTypedArray()) { _, which ->
+            when (items[which]) {
+                "✏️ Düzenle" -> editDialog(n)
+                "🔊 Çal" -> playNote(n)
+                "📤 Arkadaşa gönder" -> sendToFriend(n.optString("text").ifBlank { n.optString("transcript") })
+                "⏰ Hatırlat" -> scheduleReminder(n)
+                "📌 Sabitle" -> { n.put("pinned", true); persist() }
+                "📌 Sabitlemeyi kaldır" -> { n.put("pinned", false); persist() }
+                "🗑️ Sil" -> deleteNote(n)
             }
-            .show()
+        }.show()
     }
 
     private fun scheduleReminder(n: JSONObject) {
         val options = arrayOf(
-            "⚡ 1 dakika sonra (test)",
-            "⏱ 1 saat sonra",
-            "🌅 09:00",
-            "☀️ 13:00",
-            "🌆 20:00",
-            "📅 Tarih ve saat seç",
-            "🗑 Hatırlatmayı kaldır"
+            "⚡ 1 dakika sonra (test)", "⏱ 1 saat sonra",
+            "🌅 09:00", "☀️ 13:00", "🌆 20:00",
+            "📅 Tarih ve saat seç", "🗑 Hatırlatmayı kaldır"
         )
-        AlertDialog.Builder(this)
-            .setTitle("⏰ Ne zaman hatırlatayım?")
+        AlertDialog.Builder(this).setTitle("⏰ Ne zaman hatırlatayım?")
             .setItems(options) { _, w ->
                 when (w) {
                     6 -> {
@@ -568,18 +887,14 @@ class MainActivity : Activity() {
                     4 -> setClassic(cal, 20)
                 }
                 n.put("reminderTime", cal.timeInMillis)
-                persist()
-                setAlarm(n)
+                persist(); setAlarm(n)
                 Toast.makeText(this, "⏰ Hatırlatma kuruldu", Toast.LENGTH_SHORT).show()
-            }
-            .show()
+            }.show()
     }
 
     private fun setClassic(cal: Calendar, hour: Int) {
-        cal.set(Calendar.HOUR_OF_DAY, hour)
-        cal.set(Calendar.MINUTE, 0)
-        cal.set(Calendar.SECOND, 0)
-        cal.set(Calendar.MILLISECOND, 0)
+        cal.set(Calendar.HOUR_OF_DAY, hour); cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0); cal.set(Calendar.MILLISECOND, 0)
         if (cal.timeInMillis <= System.currentTimeMillis()) cal.add(Calendar.DAY_OF_YEAR, 1)
     }
 
@@ -588,17 +903,14 @@ class MainActivity : Activity() {
         DatePickerDialog(this, { _, y, m, d ->
             cal.set(Calendar.YEAR, y); cal.set(Calendar.MONTH, m); cal.set(Calendar.DAY_OF_MONTH, d)
             TimePickerDialog(this, { _, hh, mm ->
-                cal.set(Calendar.HOUR_OF_DAY, hh)
-                cal.set(Calendar.MINUTE, mm)
-                cal.set(Calendar.SECOND, 0)
-                cal.set(Calendar.MILLISECOND, 0)
+                cal.set(Calendar.HOUR_OF_DAY, hh); cal.set(Calendar.MINUTE, mm)
+                cal.set(Calendar.SECOND, 0); cal.set(Calendar.MILLISECOND, 0)
                 if (cal.timeInMillis <= System.currentTimeMillis()) {
                     Toast.makeText(this, "Geçmiş zaman seçilemez", Toast.LENGTH_SHORT).show()
                     return@TimePickerDialog
                 }
                 n.put("reminderTime", cal.timeInMillis)
-                persist()
-                setAlarm(n)
+                persist(); setAlarm(n)
                 Toast.makeText(this, "⏰ Hatırlatma kuruldu", Toast.LENGTH_SHORT).show()
             }, cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE), true).show()
         }, cal.get(Calendar.YEAR), cal.get(Calendar.MONTH), cal.get(Calendar.DAY_OF_MONTH)).show()
@@ -609,24 +921,19 @@ class MainActivity : Activity() {
         if (time <= 0) return
         val id = n.optLong("id").toInt()
         val i = Intent(this, ReminderReceiver::class.java).apply {
-            putExtra("text", display(n))
-            putExtra("id", id)
+            putExtra("text", display(n)); putExtra("id", id)
         }
-        val pi = PendingIntent.getBroadcast(
-            this, id, i,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val am = getSystemService(ALARM_SERVICE) as AlarmManager
-        am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, time, pi)
+        val pi = PendingIntent.getBroadcast(this, id, i,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        (getSystemService(ALARM_SERVICE) as AlarmManager)
+            .setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, time, pi)
     }
 
     private fun cancelAlarm(n: JSONObject) {
         val id = n.optLong("id").toInt()
         val i = Intent(this, ReminderReceiver::class.java)
-        val pi = PendingIntent.getBroadcast(
-            this, id, i,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+        val pi = PendingIntent.getBroadcast(this, id, i,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         (getSystemService(ALARM_SERVICE) as AlarmManager).cancel(pi)
     }
 
@@ -696,11 +1003,9 @@ class MainActivity : Activity() {
         if (f != null && f.exists() && f.length() > 0) {
             val o = JSONObject()
             o.put("id", System.currentTimeMillis())
-            o.put("type", "voice")
-            o.put("audioPath", f.absolutePath)
+            o.put("type", "voice"); o.put("audioPath", f.absolutePath)
             o.put("duration", (System.currentTimeMillis() - recordStart) / 1000)
-            o.put("transcript", "")
-            o.put("pinned", false)
+            o.put("transcript", ""); o.put("pinned", false)
             o.put("createdAt", System.currentTimeMillis())
             notes.add(0, o)
             persist()
@@ -759,12 +1064,8 @@ class MainActivity : Activity() {
         textBtn.text = "🗣️ Metin"
         textBtn.background = roundBg(BTN_SOFT)
         val tr = transcript.toString().trim()
-        if (tr.isNotEmpty()) {
-            addTextNote(tr)
-            statusText.text = "✅ Not kaydedildi"
-        } else {
-            statusText.text = "⚠️ Konuşma algılanmadı"
-        }
+        if (tr.isNotEmpty()) { addTextNote(tr); statusText.text = "✅ Not kaydedildi" }
+        else statusText.text = "⚠️ Konuşma algılanmadı"
     }
 
     private fun playNote(n: JSONObject) {
