@@ -83,6 +83,9 @@ class MainActivity : Activity() {
     private val seenInbox = HashSet<String>()
     private val handledRequests = HashSet<String>()
     private val scheduledSends = mutableListOf<JSONObject>()
+    private val prefsListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == "notes") { loadNotes(); updateList() }
+    }
 
     private val REQ_EXPORT = 71
     private val REQ_IMPORT = 72
@@ -722,6 +725,7 @@ class MainActivity : Activity() {
         setContentView(layout)
 
         loadNotes()
+        prefs.registerOnSharedPreferenceChangeListener(prefsListener)
         adapter = NoteAdapter()
         updateList()
         listMine.adapter = adapter
@@ -1298,5 +1302,10 @@ class MainActivity : Activity() {
         } catch (e: Exception) {
             Toast.makeText(this, L("noPlay"), Toast.LENGTH_SHORT).show()
         }
+    }
+
+    override fun onDestroy() {
+        prefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
+        super.onDestroy()
     }
 }
