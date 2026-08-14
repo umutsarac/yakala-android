@@ -869,8 +869,6 @@ class MainActivity : Activity() {
     private fun settingsDialog() {
         val items = arrayOf(
             if (isDark) L("toLight") else L("toDark"),
-            L("backup"),
-            L("restore"),
             if (prefs.getBoolean("shake", false)) L("shakeOn") else L("shakeOff"),
             L("backup"),
             L("restore"),
