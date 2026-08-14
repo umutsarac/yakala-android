@@ -51,6 +51,9 @@ import java.util.Locale
 
 class MainActivity : Activity() {
 
+    private val API_KEY = "AIzaSyDL4NWpuudvTu-ggKEX_pw_sVkwkGUlOzA"
+    private val DEFAULT_SERVER = "https://yakala-7ba1c-default-rtdb.europe-west1.firebasedatabase.app"
+
     private lateinit var prefs: android.content.SharedPreferences
     private val notes = mutableListOf<JSONObject>()
     private val visibleNotes = mutableListOf<JSONObject>()
@@ -100,14 +103,478 @@ class MainActivity : Activity() {
     private val RED_SOFT get() = Color.parseColor("#d97b7b")
     private val GREEN_SOFT get() = Color.parseColor(if (isDark) "#7fd7a4" else "#4c9a6b")
 
-    private val DEFAULT_SERVER = "https://yakala-7ba1c-default-rtdb.europe-west1.firebasedatabase.app"
     private val serverUrl get() = prefs.getString("server", null) ?: DEFAULT_SERVER
+    private val myUid get() = prefs.getString("uid", null)
     private val myCode: String get() {
         var c = prefs.getString("myCode", null)
         if (c == null) { c = (100000..999999).random().toString(); prefs.edit().putString("myCode", c).apply() }
         return c
     }
     private val myName get() = prefs.getString("myName", null) ?: "Yakala-$myCode"
+
+    private fun apiPost(url: String, body: String): String? = try {
+        val c = URL(url).openConnection() as HttpURLConnection
+        c.requestMethod = "POST"; c.doOutput = true
+        c.connectTimeout = 6000; c.readTimeout = 6000
+        c.setRequestProperty("Content-Type", "application/json")
+        c.outputStream.use { it.write(body.toByteArray()) }
+        if (c.responseCode in 200..299) c.inputStream.readBytes().toString(Charsets.UTF_8) else null
+    } catch (e: Exception) { null }
+
+    private fun ensureAuthSync() {
+        val tok = prefs.getString("idToken", null)
+        val exp = prefs.getLong("tokExp", 0)
+        if (tok != null && System.currentTimeMillis() < exp - 120_000) return
+        val refresh = prefs.getString("refreshToken", null)
+        var raw: String? = null
+        if (refresh != null) {
+            raw = apiPost("https://securetoken.googleapis.com/v1/token?key=$API_KEY",
+                "{\"grant_type\":\"refresh_token\",\"refresh_token\":\"$refresh\"}")
+        }
+        if (raw == null) {
+            raw = apiPost("https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=$API_KEY", "{}")
+        }
+        if (raw != null) {
+            try {
+                val o = JSONObject(raw)
+                val t = o.optString("idToken", o.optString("id_token"))
+                val u = o.optString("localId", o.optString("user_id"))
+                val r = o.optString("refreshToken", o.optString("refresh_token"))
+                if (t.isNotEmpty() && u.isNotEmpty()) {
+                    prefs.edit().putString("idToken", t).putString("uid", u)
+                        .putString("refreshToken", r)
+                        .putLong("tokExp", System.currentTimeMillis() + 3600_000).apply()
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun ensureIdentitySync() {
+        ensureAuthSync()
+        val u = myUid ?: return
+        if (!prefs.getBoolean("codeReg", false)) {
+            var code = myCode
+            val existing = conn("/codes/$code", "GET")
+            if (existing != null && existing.trim('"') != u) {
+                code = (100000..999999).random().toString()
+                prefs.edit().putString("myCode", code).apply()
+            }
+            conn("/codes/$code", "PUT", "\"$u\"")
+            conn("/users/$u/code", "PUT", "\"$code\"")
+            prefs.edit().putBoolean("codeReg", true).apply()
+        }
+        conn("/users/$u/name", "PUT", "\"$myName\"")
+    }
+
+    private fun conn(path: String, method: String, body: String? = null): String? = try {
+        ensureAuthSync()
+        val tok = prefs.getString("idToken", null) ?: return null
+        val c = URL("$serverUrl$path.json?auth=$tok").openConnection() as HttpURLConnection
+        c.requestMethod = method
+        c.connectTimeout = 6000; c.readTimeout = 6000
+        if (body != null) {
+            c.doOutput = true
+            c.setRequestProperty("Content-Type", "application/json")
+            c.outputStream.use { it.write(body.toByteArray()) }
+        }
+        val s = if (c.responseCode in 200..299)
+            c.inputStream.readBytes().toString(Charsets.UTF_8) else null
+        c.disconnect(); s
+    } catch (e: Exception) { null }
+
+    private val pollHandler = Handler(Looper.getMainLooper())
+    private val pollRunnable = object : Runnable {
+        override fun run() { poll(); pollHandler.postDelayed(this, 20000) }
+    }
+
+    private fun poll() {
+        Thread {
+            ensureIdentitySync()
+            val u = myUid ?: return@Thread
+            val rq = conn("/users/$u/requests", "GET")
+            val gr = conn("/users/$u/grants", "GET")
+            val ib = conn("/users/$u/inbox", "GET")
+            val fr = conn("/users/$u/friends", "GET")
+            pollHandler.post {
+                handleFriends(fr); handleGrants(gr); handleRequests(rq); handleInbox(ib)
+            }
+        }.start()
+    }
+
+    private fun parseMap(raw: String?): Map<String, JSONObject> {
+        val out = mutableMapOf<String, JSONObject>()
+        if (raw == null || raw == "null") return out
+        try {
+            val o = JSONObject(raw)
+            val k = o.keys()
+            while (k.hasNext()) { val key = k.next(); out[key] = o.getJSONObject(key) }
+        } catch (_: Exception) {}
+        return out
+    }
+
+    private fun handleFriends(raw: String?) { myFriends.clear(); myFriends.putAll(parseMap(raw)) }
+    private fun handleGrants(raw: String?) {
+        myGrants.clear()
+        for ((k, v) in parseMap(raw)) myGrants[k] = v.optString("status", "ask")
+    }
+
+    private fun handleRequests(raw: String?) {
+        for ((uid, v) in parseMap(raw)) {
+            if (uid in handledRequests) continue
+            handledRequests.add(uid)
+            val name = v.optString("name", "Kullanıcı")
+            AlertDialog.Builder(this)
+                .setTitle("👥 Arkadaşlık isteği")
+                .setMessage("$name seni arkadaş olarak eklemek istiyor.\nİzin seviyesi seç:")
+                .setPositiveButton("✅ Tam izin (karşılıklı)") { _, _ -> acceptFriend(uid, name, "full") }
+                .setNeutralButton("❓ Her seferinde sor") { _, _ -> acceptFriend(uid, name, "ask") }
+                .setNegativeButton("Reddet") { _, _ ->
+                    Thread { conn("/users/${myUid}/requests/$uid", "DELETE") }.start()
+                }
+                .show()
+        }
+    }
+
+    private fun acceptFriend(uid: String, name: String, status: String) {
+        val me = myUid ?: return
+        Thread {
+            conn("/users/$me/friends/$uid", "PUT", JSONObject().put("name", name).put("status", status).toString())
+            conn("/users/$uid/grants/$me", "PUT", JSONObject().put("status", status).put("name", myName).toString())
+            conn("/users/$me/grants/$uid", "PUT", JSONObject().put("status", status).put("name", name).toString())
+            conn("/users/$uid/friends/$me", "PUT", JSONObject().put("name", myName).put("status", status).toString())
+            conn("/users/$me/requests/$uid", "DELETE")
+        }.start()
+        Toast.makeText(this, "✅ $name eklendi (karşılıklı)", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun handleInbox(raw: String?) {
+        var newPending = false
+        val map = parseMap(raw)
+        for ((key, v) in map) {
+            if (key in seenInbox) continue
+            seenInbox.add(key)
+            v.put("id", key)
+            fNotes.add(0, v)
+            if (v.optBoolean("pending")) newPending = true
+            val remAt = v.optLong("reminderAt")
+            if (remAt > System.currentTimeMillis()) scheduleFriendReminder(v, remAt)
+            Thread { conn("/users/${myUid}/inbox/$key", "DELETE") }.start()
+        }
+        if (map.isNotEmpty()) {
+            saveFNotes(); updateFList()
+            if (newPending) Toast.makeText(this, "📬 Yeni not isteği var", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun loadFNotes() {
+        fNotes.clear()
+        val raw = prefs.getString("fnotes", null) ?: return
+        try {
+            val a = JSONArray(raw)
+            for (i in 0 until a.length()) fNotes.add(a.getJSONObject(i))
+        } catch (_: Exception) {}
+    }
+
+    private fun saveFNotes() {
+        val a = JSONArray()
+        fNotes.forEach { a.put(it) }
+        prefs.edit().putString("fnotes", a.toString()).apply()
+    }
+
+    private fun updateFList() {
+        fDisplay.clear()
+        fDisplay.addAll(fNotes.map { n ->
+            val p = if (n.optBoolean("pending")) "⏳ " else if (n.optLong("reminderAt") > 0) "🔔 " else ""
+            "$p👤 ${n.optString("fromName")}: ${n.optString("text")}"
+        })
+        fAdapter.notifyDataSetChanged()
+    }
+
+    private fun friendDialog(pos: Int) {
+        val n = fNotes[pos]
+        if (n.optBoolean("pending")) {
+            AlertDialog.Builder(this)
+                .setTitle("👤 " + n.optString("fromName"))
+                .setMessage(n.optString("text"))
+                .setPositiveButton("✅ Kabul et") { _, _ ->
+                    n.put("pending", false); saveFNotes(); updateFList()
+                }
+                .setNegativeButton("❌ Reddet") { _, _ ->
+                    fNotes.removeAt(pos); saveFNotes(); updateFList()
+                }
+                .show()
+        } else {
+            AlertDialog.Builder(this)
+                .setTitle("👤 " + n.optString("fromName"))
+                .setMessage(n.optString("text"))
+                .setPositiveButton("📋 Notlarıma ekle") { _, _ ->
+                    addTextNote("👤 " + n.optString("fromName") + ": " + n.optString("text"))
+                }
+                .setNegativeButton("🗑 Sil") { _, _ ->
+                    fNotes.removeAt(pos); saveFNotes(); updateFList()
+                }
+                .show()
+        }
+    }
+
+    private fun clipText(): String {
+        val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+        val c = cm.primaryClip
+        return if (c != null && c.itemCount > 0) c.getItemAt(0).text?.toString() ?: "" else ""
+    }
+
+    private fun friendsDialog() {
+        val items = arrayOf(
+            "🪪 Kodum: $myCode (kopyala)",
+            "➕ Kod ile arkadaş bul",
+            "📨 Davet linki paylaş",
+            "👥 Arkadaşlarım (${myFriends.size})",
+            "🔗 Sunucu / isim değiştir"
+        )
+        AlertDialog.Builder(this).setTitle("👥 Arkadaşlar").setItems(items) { _, w ->
+            when (w) {
+                0 -> {
+                    (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager)
+                        .setPrimaryClip(ClipData.newPlainText("code", myCode))
+                    Toast.makeText(this, "🪪 Kod kopyalandı: $myCode", Toast.LENGTH_SHORT).show()
+                }
+                1 -> addFriendDialog()
+                2 -> shareInvite()
+                3 -> friendsListDialog()
+                4 -> setupServerDialog()
+            }
+        }.show()
+    }
+
+    private fun addFriendDialog() {
+        val et = EditText(this).apply {
+            hint = "Arkadaşın kodu (6 hane)"
+            setText(Regex("\\d{6}").find(clipText())?.value ?: "")
+        }
+        AlertDialog.Builder(this)
+            .setTitle("➕ Kod ile arkadaş bul")
+            .setView(et)
+            .setPositiveButton("🔍 Ara") { _, _ ->
+                val code = Regex("\\d{6}").find(et.text.toString())?.value ?: ""
+                if (code.isEmpty() || code == myCode) {
+                    Toast.makeText(this, "Geçersiz kod", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                Toast.makeText(this, "🔍 Aranıyor...", Toast.LENGTH_SHORT).show()
+                Thread {
+                    ensureIdentitySync()
+                    val uidRaw = conn("/codes/$code", "GET")
+                    val uid = uidRaw?.trim('"')
+                    val nameRaw = if (uid != null) conn("/users/$uid/name", "GET") else null
+                    pollHandler.post {
+                        if (uid == null || nameRaw == null || nameRaw == "null") {
+                            Toast.makeText(this, "❌ Bu kodda kullanıcı bulunamadı", Toast.LENGTH_LONG).show()
+                        } else {
+                            val name = nameRaw.trim('"')
+                            AlertDialog.Builder(this)
+                                .setTitle("👤 $name bulundu")
+                                .setMessage("Arkadaş olarak eklensin mi?")
+                                .setPositiveButton("✅ Ekle") { _, _ -> inviteFriend(uid, name) }
+                                .setNegativeButton("Vazgeç", null)
+                                .show()
+                        }
+                    }
+                }.start()
+            }
+            .setNegativeButton("Vazgeç", null)
+            .show()
+    }
+
+    private fun inviteFriend(uid: String, name: String) {
+        val me = myUid ?: return
+        Thread {
+            conn("/users/$uid/requests/$me", "PUT", JSONObject().put("name", myName).toString())
+            conn("/users/$me/friends/$uid", "PUT",
+                JSONObject().put("name", name).put("status", "ask").toString())
+            pollHandler.post {
+                Toast.makeText(this, "📨 $name'a istek gönderildi", Toast.LENGTH_SHORT).show()
+            }
+        }.start()
+    }
+
+    private fun shareInvite() {
+        val url = "https://umutsarac.github.io/yakala-android/invite.html?code=$myCode&name=$myName"
+        val i = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, "⚡ Yakala ile birbirimize not gönderelim! Kodum: $myCode\n$url")
+        }
+        startActivity(Intent.createChooser(i, "Daveti paylaş"))
+    }
+
+    private fun setupServerDialog() {
+        val ll = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(16), dp(24), 0)
+        }
+        val urlEt = EditText(this).apply {
+            hint = "Firebase URL"
+            setText(serverUrl)
+        }
+        val nameEt = EditText(this).apply {
+            hint = "Görünen adın"
+            setText(if (myName.startsWith("Yakala-")) "" else myName)
+        }
+        ll.addView(urlEt); ll.addView(nameEt)
+        AlertDialog.Builder(this)
+            .setTitle("🔗 Sunucu / isim")
+            .setView(ll)
+            .setPositiveButton("Kaydet") { _, _ ->
+                prefs.edit()
+                    .putString("server", urlEt.text.toString().trim().trimEnd('/'))
+                    .putString("myName", nameEt.text.toString().trim().ifEmpty { "Yakala-$myCode" })
+                    .putBoolean("codeReg", false)
+                    .apply()
+                Toast.makeText(this, "✅ Kaydedildi", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Vazgeç", null)
+            .show()
+    }
+
+    private fun friendsListDialog() {
+        if (myFriends.isEmpty()) { Toast.makeText(this, "Henüz arkadaş yok", Toast.LENGTH_SHORT).show(); return }
+        val uids = myFriends.keys.toList()
+        val names = uids.map { c ->
+            val st = if (myFriends[c]?.optString("status") == "full") "tam izin" else "sorar"
+            "${myFriends[c]?.optString("name") ?: c} ($st)"
+        }
+        AlertDialog.Builder(this).setTitle("👥 Arkadaşlarım").setItems(names.toTypedArray()) { _, w ->
+            val uid = uids[w]
+            val name = myFriends[uid]?.optString("name") ?: "Arkadaş"
+            val me = myUid ?: return@setItems
+            AlertDialog.Builder(this)
+                .setTitle(name)
+                .setItems(arrayOf("✅ Tam izin (karşılıklı)", "❓ Her seferinde sor", "🗑 Arkadaşı sil")) { _, s ->
+                    Thread {
+                        when (s) {
+                            0 -> {
+                                conn("/users/$me/friends/$uid", "PUT", JSONObject().put("name", name).put("status", "full").toString())
+                                conn("/users/$uid/grants/$me", "PUT", JSONObject().put("status", "full").put("name", myName).toString())
+                                conn("/users/$me/grants/$uid", "PUT", JSONObject().put("status", "full").put("name", name).toString())
+                                conn("/users/$uid/friends/$me", "PUT", JSONObject().put("name", myName).put("status", "full").toString())
+                            }
+                            1 -> {
+                                conn("/users/$me/friends/$uid", "PUT", JSONObject().put("name", name).put("status", "ask").toString())
+                                conn("/users/$uid/grants/$me", "PUT", JSONObject().put("status", "ask").put("name", myName).toString())
+                                conn("/users/$me/grants/$uid", "PUT", JSONObject().put("status", "ask").put("name", name).toString())
+                                conn("/users/$uid/friends/$me", "PUT", JSONObject().put("name", myName).put("status", "ask").toString())
+                            }
+                            2 -> {
+                                conn("/users/$me/friends/$uid", "DELETE")
+                                conn("/users/$uid/grants/$me", "DELETE")
+                            }
+                        }
+                        pollHandler.post { poll() }
+                    }.start()
+                }
+                .show()
+        }.show()
+    }
+
+    private fun sendToFriend(text: String) {
+        if (myFriends.isEmpty()) { Toast.makeText(this, "Önce arkadaş ekle", Toast.LENGTH_SHORT).show(); return }
+        val uids = myFriends.keys.toList()
+        val names = uids.map { c -> "${myFriends[c]?.optString("name") ?: c}" }
+        AlertDialog.Builder(this).setTitle("📤 Kime gönderelim?").setItems(names.toTypedArray()) { _, w ->
+            val uid = uids[w]
+            val tname = myFriends[uid]?.optString("name") ?: "Arkadaş"
+            AlertDialog.Builder(this).setTitle("$tname — not ne zaman ulaşsın?").setItems(arrayOf("⚡ Hemen gönder", "⏰ Zaman seçerek gönder")) { _, d ->
+                if (d == 0) askReminder(uid, text, 0L)
+                else pickTime { at -> askReminder(uid, text, at) }
+            }.show()
+        }.show()
+    }
+
+    private fun askReminder(uid: String, text: String, deliveryAt: Long) {
+        val tname = myFriends[uid]?.optString("name") ?: "Arkadaş"
+        AlertDialog.Builder(this).setTitle("🔔 $tname için hatırlatıcı eklensin mi?").setItems(arrayOf("🔔 Hatırlatıcı ekle", "➡️ Hatırlatıcısız gönder")) { _, r ->
+            if (r == 0) pickTime { remAt -> doSend(uid, text, deliveryAt, remAt) }
+            else doSend(uid, text, deliveryAt, 0L)
+        }.show()
+    }
+
+    private fun pickTime(onPick: (Long) -> Unit) {
+        val cal = Calendar.getInstance()
+        DatePickerDialog(this, { _, y, m, d ->
+            cal.set(Calendar.YEAR, y); cal.set(Calendar.MONTH, m); cal.set(Calendar.DAY_OF_MONTH, d)
+            TimePickerDialog(this, { _, hh, mm ->
+                cal.set(Calendar.HOUR_OF_DAY, hh); cal.set(Calendar.MINUTE, mm)
+                cal.set(Calendar.SECOND, 0); cal.set(Calendar.MILLISECOND, 0)
+                if (cal.timeInMillis <= System.currentTimeMillis() + 60_000) {
+                    Toast.makeText(this, "Gelecek bir zaman seç", Toast.LENGTH_SHORT).show(); return@TimePickerDialog
+                }
+                onPick(cal.timeInMillis)
+            }, cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE), true).show()
+        }, cal.get(Calendar.YEAR), cal.get(Calendar.MONTH), cal.get(Calendar.DAY_OF_MONTH)).show()
+    }
+
+    private fun doSend(uid: String, text: String, deliveryAt: Long, reminderAt: Long) {
+        val tname = myFriends[uid]?.optString("name") ?: "Arkadaş"
+        if (deliveryAt <= 0L) {
+            postInbox(uid, text, "now", reminderAt)
+            Toast.makeText(this, "📤 $tname'a gönderildi" + (if (reminderAt > 0) " + 🔔 ${fmtDate(reminderAt)}" else ""), Toast.LENGTH_SHORT).show()
+        } else {
+            val job = JSONObject().apply {
+                put("to", uid); put("text", text); put("at", deliveryAt); put("reminderAt", reminderAt)
+            }
+            scheduledSends.add(job); saveScheduled()
+            Toast.makeText(this, "⏰ ${fmtDate(deliveryAt)}'de ulaşacak" + (if (reminderAt > 0) " + 🔔 ${fmtDate(reminderAt)}" else ""), Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun postInbox(uid: String, text: String, kind: String, reminderAt: Long) {
+        val pending = myGrants[uid] != "full"
+        val o = JSONObject().apply {
+            put("from", myCode); put("fromName", myName)
+            put("text", text); put("time", System.currentTimeMillis())
+            put("pending", pending); put("kind", kind)
+            if (reminderAt > 0) put("reminderAt", reminderAt)
+        }
+        Thread { conn("/users/$uid/inbox", "POST", o.toString()) }.start()
+    }
+
+    private val sendTicker = object : Runnable {
+        override fun run() {
+            val now = System.currentTimeMillis()
+            val due = scheduledSends.filter { it.optLong("at") <= now }.toList()
+            due.forEach { job ->
+                postInbox(job.optString("to"), job.optString("text"), "timed", job.optLong("reminderAt"))
+                scheduledSends.remove(job)
+            }
+            if (due.isNotEmpty()) saveScheduled()
+            handler.postDelayed(this, 15000)
+        }
+    }
+
+    private fun loadScheduled() {
+        scheduledSends.clear()
+        val raw = prefs.getString("scheduled", null) ?: return
+        try { val a = JSONArray(raw); for (i in 0 until a.length()) scheduledSends.add(a.getJSONObject(i)) } catch (_: Exception) {}
+    }
+
+    private fun saveScheduled() {
+        val a = JSONArray(); scheduledSends.forEach { a.put(it) }
+        prefs.edit().putString("scheduled", a.toString()).apply()
+    }
+
+    private fun handleInviteIntent(i: Intent?) {
+        val u = i?.data ?: return
+        if (u.scheme == "yakala" && u.host == "invite") {
+            val code = u.getQueryParameter("code") ?: return
+            val name = u.getQueryParameter("name") ?: "Arkadaş"
+            if (code == myCode) return
+            Thread {
+                ensureIdentitySync()
+                val uidRaw = conn("/codes/$code", "GET")
+                val uid = uidRaw?.trim('"') ?: return@Thread
+                pollHandler.post { inviteFriend(uid, name) }
+            }.start()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -140,35 +607,28 @@ class MainActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
         val friendsBtn = TextView(this).apply {
-            text = "👥"
-            textSize = 20f
+            text = "👥"; textSize = 20f
             setPadding(dp(8), dp(6), dp(8), dp(6))
             setOnClickListener { friendsDialog() }
         }
         val searchToggle = TextView(this).apply {
-            text = "🔍"
-            textSize = 20f
+            text = "🔍"; textSize = 20f
             setPadding(dp(8), dp(6), dp(8), dp(6))
             setOnClickListener {
                 if (searchInput.visibility == View.VISIBLE) {
-                    searchInput.visibility = View.GONE
-                    searchInput.setText("")
+                    searchInput.visibility = View.GONE; searchInput.setText("")
                 } else {
-                    searchInput.visibility = View.VISIBLE
-                    searchInput.requestFocus()
+                    searchInput.visibility = View.VISIBLE; searchInput.requestFocus()
                 }
             }
         }
         val settingsBtn = TextView(this).apply {
-            text = "⚙️"
-            textSize = 22f
+            text = "⚙️"; textSize = 22f
             setPadding(dp(8), dp(6), 0, dp(6))
             setOnClickListener { settingsDialog() }
         }
-        titleRow.addView(title)
-        titleRow.addView(friendsBtn)
-        titleRow.addView(searchToggle)
-        titleRow.addView(settingsBtn)
+        titleRow.addView(title); titleRow.addView(friendsBtn)
+        titleRow.addView(searchToggle); titleRow.addView(settingsBtn)
 
         searchInput = EditText(this).apply {
             hint = "🔍 Ara..."
@@ -195,34 +655,37 @@ class MainActivity : Activity() {
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { bottomMargin = dp(10) }
         }
-        listOf("•", "✅", "📞", "", "💡").forEach { s ->
+        val chip = dp(36)
+        listOf("•", "✅", "📞", "", "💡", "📅", "⭐").forEach { s ->
             val b = TextView(this).apply {
-                text = s
-                textSize = 16f
-                setPadding(dp(10), dp(4), dp(10), dp(4))
-                background = roundBg(SURFACE, 10)
+                text = s; textSize = 15f
+                gravity = android.view.Gravity.CENTER
+                background = roundBg(SURFACE, 12)
                 setOnClickListener {
                     val cur = input.text.toString()
                     input.setText(if (cur.isEmpty()) "$s " else "$cur\n$s ")
                     input.setSelection(input.text.length)
                 }
             }
-            bulletRow.addView(b, LinearLayout.LayoutParams(WRAP, WRAP).apply { marginEnd = dp(6) })
+            bulletRow.addView(b, LinearLayout.LayoutParams(chip, chip).apply { marginEnd = dp(6) })
         }
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val mkLp = { LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
             marginStart = dp(5); marginEnd = dp(5)
         } }
         val save = Button(this).apply {
-            text = "✓ Kaydet"; setTextColor(Color.WHITE)
+            text = "✓ Kaydet"; setTextColor(Color.WHITE); textSize = 14f
+            minHeight = 0; setPadding(0, dp(8), 0, dp(8))
             background = roundBg(AMBER_SOFT); layoutParams = mkLp()
         }
         voiceBtn = Button(this).apply {
-            text = "🎤 Ses"; setTextColor(Color.WHITE)
+            text = "🎤 Ses"; setTextColor(Color.WHITE); textSize = 14f
+            minHeight = 0; setPadding(0, dp(8), 0, dp(8))
             background = roundBg(BTN_SOFT); layoutParams = mkLp()
         }
         textBtn = Button(this).apply {
-            text = "🗣️ Metin"; setTextColor(Color.WHITE)
+            text = "🗣️ Metin"; setTextColor(Color.WHITE); textSize = 14f
+            minHeight = 0; setPadding(0, dp(8), 0, dp(8))
             background = roundBg(BTN_SOFT); layoutParams = mkLp()
         }
         row.addView(save); row.addView(voiceBtn); row.addView(textBtn)
@@ -305,7 +768,7 @@ class MainActivity : Activity() {
         handleInviteIntent(intent)
 
         pollHandler.postDelayed(pollRunnable, 3000)
-        Thread { conn("/users/$myCode/name", "PUT", "\"$myName\"") }.start()
+        Thread { ensureIdentitySync() }.start()
         loadScheduled(); handler.postDelayed(sendTicker, 15000)
     }
 
@@ -317,412 +780,6 @@ class MainActivity : Activity() {
         handleInviteIntent(intent)
     }
 
-    // ==== AĞ ====
-    private fun conn(path: String, method: String, body: String? = null): String? = try {
-        val c = URL("$serverUrl$path.json").openConnection() as HttpURLConnection
-        c.requestMethod = method
-        c.connectTimeout = 6000; c.readTimeout = 6000
-        if (body != null) {
-            c.doOutput = true
-            c.setRequestProperty("Content-Type", "application/json")
-            c.outputStream.use { it.write(body.toByteArray()) }
-        }
-        val s = if (c.responseCode in 200..299)
-            c.inputStream.readBytes().toString(Charsets.UTF_8) else null
-        c.disconnect(); s
-    } catch (e: Exception) { null }
-
-    private val pollHandler = Handler(Looper.getMainLooper())
-    private val pollRunnable = object : Runnable {
-        override fun run() { poll(); pollHandler.postDelayed(this, 20000) }
-    }
-
-    private fun poll() {
-        if (serverUrl.isEmpty()) return
-        Thread {
-            val rq = conn("/users/$myCode/requests", "GET")
-            val gr = conn("/users/$myCode/grants", "GET")
-            val ib = conn("/users/$myCode/inbox", "GET")
-            val fr = conn("/users/$myCode/friends", "GET")
-            pollHandler.post {
-                handleFriends(fr); handleGrants(gr); handleRequests(rq); handleInbox(ib)
-            }
-        }.start()
-    }
-
-    private fun parseMap(raw: String?): Map<String, JSONObject> {
-        val out = mutableMapOf<String, JSONObject>()
-        if (raw == null || raw == "null") return out
-        try {
-            val o = JSONObject(raw)
-            val k = o.keys()
-            while (k.hasNext()) { val key = k.next(); out[key] = o.getJSONObject(key) }
-        } catch (_: Exception) {}
-        return out
-    }
-
-    private fun handleFriends(raw: String?) { myFriends.clear(); myFriends.putAll(parseMap(raw)) }
-    private fun handleGrants(raw: String?) {
-        myGrants.clear()
-        for ((k, v) in parseMap(raw)) myGrants[k] = v.optString("status", "ask")
-    }
-
-    private fun handleRequests(raw: String?) {
-        for ((code, v) in parseMap(raw)) {
-            if (code in handledRequests) continue
-            handledRequests.add(code)
-            val name = v.optString("name", code)
-            AlertDialog.Builder(this)
-                .setTitle("👥 Arkadaşlık isteği")
-                .setMessage("$name seni arkadaş olarak eklemek istiyor.\nİzin seviyesi seç:")
-                .setPositiveButton("✅ Tam izin (karşılıklı)") { _, _ -> acceptFriend(code, name, "full") }
-                .setNeutralButton("❓ Her seferinde sor") { _, _ -> acceptFriend(code, name, "ask") }
-                .setNegativeButton("Reddet") { _, _ ->
-                    Thread { conn("/users/$myCode/requests/$code", "DELETE") }.start()
-                }
-                .show()
-        }
-    }
-
-    private fun acceptFriend(code: String, name: String, status: String) {
-        Thread {
-            conn("/users/$myCode/friends/$code", "PUT",
-                JSONObject().put("name", name).put("status", status).toString())
-            conn("/users/$code/grants/$myCode", "PUT",
-                JSONObject().put("status", status).put("name", myName).toString())
-            conn("/users/$myCode/grants/$code", "PUT",
-                JSONObject().put("status", status).put("name", name).toString())
-            conn("/users/$code/friends/$myCode", "PUT",
-                JSONObject().put("name", myName).put("status", status).toString())
-            conn("/users/$myCode/requests/$code", "DELETE")
-        }.start()
-        Toast.makeText(this, "✅ $name eklendi (karşılıklı)", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun handleInbox(raw: String?) {
-        var newPending = false
-        val map = parseMap(raw)
-        for ((key, v) in map) {
-            if (key in seenInbox) continue
-            seenInbox.add(key)
-            v.put("id", key)
-            fNotes.add(0, v)
-            if (v.optBoolean("pending")) newPending = true
-            val remAt = v.optLong("reminderAt")
-            if (remAt > System.currentTimeMillis()) scheduleFriendReminder(v, remAt)
-            Thread { conn("/users/$myCode/inbox/$key", "DELETE") }.start()
-        }
-        if (map.isNotEmpty()) {
-            saveFNotes(); updateFList()
-            if (newPending) Toast.makeText(this, "📬 Yeni not isteği var", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private fun loadFNotes() {
-        fNotes.clear()
-        val raw = prefs.getString("fnotes", null) ?: return
-        try {
-            val a = JSONArray(raw)
-            for (i in 0 until a.length()) fNotes.add(a.getJSONObject(i))
-        } catch (_: Exception) {}
-    }
-
-    private fun saveFNotes() {
-        val a = JSONArray()
-        fNotes.forEach { a.put(it) }
-        prefs.edit().putString("fnotes", a.toString()).apply()
-    }
-
-    private fun updateFList() {
-        fDisplay.clear()
-        fDisplay.addAll(fNotes.map { n ->
-            val p = if (n.optBoolean("pending")) "⏳ " else if (n.optLong("reminderAt") > 0) "🔔 " else ""
-            "$p👤 ${n.optString("fromName")}: ${n.optString("text")}"
-        })
-        fAdapter.notifyDataSetChanged()
-    }
-
-    private fun friendDialog(pos: Int) {
-        val n = fNotes[pos]
-        if (n.optBoolean("pending")) {
-            AlertDialog.Builder(this)
-                .setTitle("👤 " + n.optString("fromName"))
-                .setMessage(n.optString("text"))
-                .setPositiveButton("✅ Kabul et") { _, _ ->
-                    n.put("pending", false); saveFNotes(); updateFList()
-                }
-                .setNegativeButton("❌ Reddet") { _, _ ->
-                    fNotes.removeAt(pos); saveFNotes(); updateFList()
-                }
-                .show()
-        } else {
-            AlertDialog.Builder(this)
-                .setTitle("👤 " + n.optString("fromName"))
-                .setMessage(n.optString("text"))
-                .setPositiveButton("📋 Notlarıma ekle") { _, _ ->
-                    addTextNote("👤 " + n.optString("fromName") + ": " + n.optString("text"))
-                }
-                .setNegativeButton("🗑 Sil") { _, _ ->
-                    fNotes.removeAt(pos); saveFNotes(); updateFList()
-                }
-                .show()
-        }
-    }
-
-    // ==== ARKADAŞ MENÜSÜ ====
-    private fun clipText(): String {
-        val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
-        val c = cm.primaryClip
-        return if (c != null && c.itemCount > 0) c.getItemAt(0).text?.toString() ?: "" else ""
-    }
-
-    private fun friendsDialog() {
-        if (serverUrl.isEmpty()) { setupServerDialog(); return }
-        val items = arrayOf(
-            "🪪 Kodum: $myCode (kopyala)",
-            "➕ Kod ile arkadaş bul",
-            "📨 Davet linki paylaş",
-            "👥 Arkadaşlarım (${myFriends.size})",
-            "🔗 Sunucu / isim değiştir"
-        )
-        AlertDialog.Builder(this).setTitle("👥 Arkadaşlar").setItems(items) { _, w ->
-            when (w) {
-                0 -> {
-                    (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager)
-                        .setPrimaryClip(ClipData.newPlainText("code", myCode))
-                    Toast.makeText(this, "🪪 Kod kopyalandı: $myCode", Toast.LENGTH_SHORT).show()
-                }
-                1 -> addFriendDialog()
-                2 -> shareInvite()
-                3 -> friendsListDialog()
-                4 -> setupServerDialog()
-            }
-        }.show()
-    }
-
-    private fun addFriendDialog() {
-        val et = EditText(this).apply {
-            hint = "Arkadaşın kodu (6 hane)"
-            setText(Regex("\\d{6}").find(clipText())?.value ?: "")
-        }
-        AlertDialog.Builder(this)
-            .setTitle("➕ Kod ile arkadaş bul")
-            .setView(et)
-            .setPositiveButton("🔍 Ara") { _, _ ->
-                val code = Regex("\\d{6}").find(et.text.toString())?.value ?: ""
-                if (code.isEmpty() || code == myCode) {
-                    Toast.makeText(this, "Geçersiz kod", Toast.LENGTH_SHORT).show()
-                    return@setPositiveButton
-                }
-                Toast.makeText(this, "🔍 Aranıyor...", Toast.LENGTH_SHORT).show()
-                Thread {
-                    val raw = conn("/users/$code/name", "GET")
-                    pollHandler.post {
-                        if (raw == null || raw == "null") {
-                            Toast.makeText(this, "❌ Bu kodda kullanıcı bulunamadı", Toast.LENGTH_LONG).show()
-                        } else {
-                            val name = raw.trim('"')
-                            AlertDialog.Builder(this)
-                                .setTitle("👤 $name bulundu")
-                                .setMessage("Arkadaş olarak eklensin mi?")
-                                .setPositiveButton("✅ Ekle") { _, _ -> inviteFriend(code, name) }
-                                .setNegativeButton("Vazgeç", null)
-                                .show()
-                        }
-                    }
-                }.start()
-            }
-            .setNegativeButton("Vazgeç", null)
-            .show()
-    }
-
-    private fun inviteFriend(code: String, name: String) {
-        Thread {
-            conn("/users/$code/requests/$myCode", "PUT", JSONObject().put("name", myName).toString())
-            conn("/users/$myCode/friends/$code", "PUT",
-                JSONObject().put("name", name).put("status", "ask").toString())
-            pollHandler.post {
-                Toast.makeText(this, "📨 $name'a istek gönderildi", Toast.LENGTH_SHORT).show()
-            }
-        }.start()
-    }
-
-    private fun shareInvite() {
-        val url = "https://umutsarac.github.io/yakala-android/invite.html?code=$myCode&name=$myName"
-        val i = Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_TEXT, "⚡ Yakala ile birbirimize not gönderelim! Kodum: $myCode\n$url")
-        }
-        startActivity(Intent.createChooser(i, "Daveti paylaş"))
-    }
-
-    private fun setupServerDialog() {
-        val ll = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(24), dp(16), dp(24), 0)
-        }
-        val urlEt = EditText(this).apply {
-            hint = "Firebase URL (https://...)"
-            setText(serverUrl)
-        }
-        val nameEt = EditText(this).apply {
-            hint = "Görünen adın"
-            setText(if (myName.startsWith("Yakala-")) "" else myName)
-        }
-        ll.addView(urlEt); ll.addView(nameEt)
-        AlertDialog.Builder(this)
-            .setTitle("🔗 Sunucu kurulumu")
-            .setView(ll)
-            .setPositiveButton("Kaydet") { _, _ ->
-                prefs.edit()
-                    .putString("server", urlEt.text.toString().trim().trimEnd('/'))
-                    .putString("myName", nameEt.text.toString().trim().ifEmpty { "Yakala-$myCode" })
-                    .apply()
-                Thread { conn("/users/$myCode/name", "PUT", "\"$myName\"") }.start()
-        loadScheduled(); handler.postDelayed(sendTicker, 15000)
-                Toast.makeText(this, "✅ Kaydedildi", Toast.LENGTH_SHORT).show()
-            }
-            .setNegativeButton("Vazgeç", null)
-            .show()
-    }
-
-    private fun friendsListDialog() {
-        if (myFriends.isEmpty()) { Toast.makeText(this, "Henüz arkadaş yok", Toast.LENGTH_SHORT).show(); return }
-        val codes = myFriends.keys.toList()
-        val names = codes.map { c ->
-            val st = if (myFriends[c]?.optString("status") == "full") "tam izin" else "sorar"
-            "${myFriends[c]?.optString("name") ?: c} ($st)"
-        }
-        AlertDialog.Builder(this).setTitle("👥 Arkadaşlarım").setItems(names.toTypedArray()) { _, w ->
-            val code = codes[w]
-            val name = myFriends[code]?.optString("name") ?: code
-            AlertDialog.Builder(this)
-                .setTitle(name)
-                .setItems(arrayOf("✅ Tam izin (karşılıklı)", "❓ Her seferinde sor", "🗑 Arkadaşı sil")) { _, s ->
-                    Thread {
-                        when (s) {
-                            0 -> {
-                                conn("/users/$myCode/friends/$code", "PUT", JSONObject().put("name", name).put("status", "full").toString())
-                                conn("/users/$code/grants/$myCode", "PUT", JSONObject().put("status", "full").put("name", myName).toString())
-                                conn("/users/$myCode/grants/$code", "PUT", JSONObject().put("status", "full").put("name", name).toString())
-                                conn("/users/$code/friends/$myCode", "PUT", JSONObject().put("name", myName).put("status", "full").toString())
-                            }
-                            1 -> {
-                                conn("/users/$myCode/friends/$code", "PUT", JSONObject().put("name", name).put("status", "ask").toString())
-                                conn("/users/$code/grants/$myCode", "PUT", JSONObject().put("status", "ask").put("name", myName).toString())
-                                conn("/users/$myCode/grants/$code", "PUT", JSONObject().put("status", "ask").put("name", name).toString())
-                                conn("/users/$code/friends/$myCode", "PUT", JSONObject().put("name", myName).put("status", "ask").toString())
-                            }
-                            2 -> {
-                                conn("/users/$myCode/friends/$code", "DELETE")
-                                conn("/users/$code/grants/$myCode", "DELETE")
-                            }
-                        }
-                        pollHandler.post { poll() }
-                    }.start()
-                }
-                .show()
-        }.show()
-    }
-
-    private fun sendToFriend(text: String) {
-        if (myFriends.isEmpty()) { Toast.makeText(this, "Önce arkadaş ekle", Toast.LENGTH_SHORT).show(); return }
-        val codes = myFriends.keys.toList()
-        val names = codes.map { c -> "${myFriends[c]?.optString("name") ?: c}" }
-        AlertDialog.Builder(this).setTitle("📤 Kime gönderelim?").setItems(names.toTypedArray()) { _, w ->
-            val code = codes[w]
-            val tname = myFriends[code]?.optString("name") ?: code
-            AlertDialog.Builder(this).setTitle("$tname — not ne zaman ulaşsın?").setItems(arrayOf("⚡ Hemen gönder", "⏰ Zaman seçerek gönder")) { _, d ->
-                if (d == 0) askReminder(code, text, 0L)
-                else pickTime { at -> askReminder(code, text, at) }
-            }.show()
-        }.show()
-    }
-
-    private fun askReminder(code: String, text: String, deliveryAt: Long) {
-        val tname = myFriends[code]?.optString("name") ?: code
-        AlertDialog.Builder(this).setTitle("🔔 $tname için hatırlatıcı eklensin mi?").setItems(arrayOf("🔔 Hatırlatıcı ekle", "➡️ Hatırlatıcısız gönder")) { _, r ->
-            if (r == 0) pickTime { remAt -> doSend(code, text, deliveryAt, remAt) }
-            else doSend(code, text, deliveryAt, 0L)
-        }.show()
-    }
-
-    private fun pickTime(onPick: (Long) -> Unit) {
-        val cal = Calendar.getInstance()
-        DatePickerDialog(this, { _, y, m, d ->
-            cal.set(Calendar.YEAR, y); cal.set(Calendar.MONTH, m); cal.set(Calendar.DAY_OF_MONTH, d)
-            TimePickerDialog(this, { _, hh, mm ->
-                cal.set(Calendar.HOUR_OF_DAY, hh); cal.set(Calendar.MINUTE, mm)
-                cal.set(Calendar.SECOND, 0); cal.set(Calendar.MILLISECOND, 0)
-                if (cal.timeInMillis <= System.currentTimeMillis() + 60_000) {
-                    Toast.makeText(this, "Gelecek bir zaman seç", Toast.LENGTH_SHORT).show(); return@TimePickerDialog
-                }
-                onPick(cal.timeInMillis)
-            }, cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE), true).show()
-        }, cal.get(Calendar.YEAR), cal.get(Calendar.MONTH), cal.get(Calendar.DAY_OF_MONTH)).show()
-    }
-
-    private fun doSend(code: String, text: String, deliveryAt: Long, reminderAt: Long) {
-        val tname = myFriends[code]?.optString("name") ?: code
-        if (deliveryAt <= 0L) {
-            postInbox(code, text, "now", reminderAt)
-            Toast.makeText(this, "📤 $tname'a gönderildi" + (if (reminderAt > 0) " + 🔔 ${fmtDate(reminderAt)}" else ""), Toast.LENGTH_SHORT).show()
-        } else {
-            val job = JSONObject().apply {
-                put("to", code); put("text", text); put("at", deliveryAt); put("reminderAt", reminderAt)
-            }
-            scheduledSends.add(job); saveScheduled()
-            Toast.makeText(this, "⏰ ${fmtDate(deliveryAt)}'de ulaşacak" + (if (reminderAt > 0) " + 🔔 ${fmtDate(reminderAt)}" else ""), Toast.LENGTH_LONG).show()
-        }
-    }
-
-    private fun postInbox(code: String, text: String, kind: String, reminderAt: Long) {
-        val pending = myGrants[code] != "full"
-        val o = JSONObject().apply {
-            put("from", myCode); put("fromName", myName)
-            put("text", text); put("time", System.currentTimeMillis())
-            put("pending", pending); put("kind", kind)
-            if (reminderAt > 0) put("reminderAt", reminderAt)
-        }
-        Thread { conn("/users/$code/inbox", "POST", o.toString()) }.start()
-    }
-
-    private val sendTicker = object : Runnable {
-        override fun run() {
-            val now = System.currentTimeMillis()
-            val due = scheduledSends.filter { it.optLong("at") <= now }.toList()
-            due.forEach { job ->
-                postInbox(job.optString("to"), job.optString("text"), "timed", job.optLong("reminderAt"))
-                scheduledSends.remove(job)
-            }
-            if (due.isNotEmpty()) saveScheduled()
-            handler.postDelayed(this, 15000)
-        }
-    }
-
-    private fun loadScheduled() {
-        scheduledSends.clear()
-        val raw = prefs.getString("scheduled", null) ?: return
-        try { val a = JSONArray(raw); for (i in 0 until a.length()) scheduledSends.add(a.getJSONObject(i)) } catch (_: Exception) {}
-    }
-
-    private fun saveScheduled() {
-        val a = JSONArray(); scheduledSends.forEach { a.put(it) }
-        prefs.edit().putString("scheduled", a.toString()).apply()
-    }
-
-    private fun handleInviteIntent(i: Intent?) {
-        val u = i?.data ?: return
-        if (u.scheme == "yakala" && u.host == "invite") {
-            val code = u.getQueryParameter("code") ?: return
-            val name = u.getQueryParameter("name") ?: "Arkadaş"
-            if (code == myCode) return
-            if (serverUrl.isEmpty()) { setupServerDialog(); return }
-            inviteFriend(code, name)
-        }
-    }
-
-    // ==== NOT ADAPTÖRÜ ====
     private inner class NoteAdapter : BaseAdapter() {
         override fun getCount() = visibleNotes.size
         override fun getItem(p: Int) = visibleNotes[p]
@@ -796,14 +853,14 @@ class MainActivity : Activity() {
             if (isDark) "☀️ Açık temaya geç" else "🌙 Karanlık temaya geç",
             "📤 Yedekle (JSON)",
             "📥 Geri yükle",
-            "ℹ️ Yakala v1.3"
+            "ℹ️ Yakala v2.0 🔐"
         )
         AlertDialog.Builder(this).setTitle("⚙️ Ayarlar").setItems(items) { _, w ->
             when (w) {
                 0 -> { prefs.edit().putBoolean("dark", !isDark).apply(); recreate() }
                 1 -> exportNotes()
                 2 -> importNotes()
-                3 -> Toast.makeText(this, "⚡ Yakala v1.3 — karşılıklı izin + kod arama", Toast.LENGTH_SHORT).show()
+                3 -> Toast.makeText(this, "⚡ Yakala v2.0 — güvenli bağlantı", Toast.LENGTH_SHORT).show()
             }
         }.show()
     }
@@ -1051,6 +1108,18 @@ class MainActivity : Activity() {
         (getSystemService(ALARM_SERVICE) as AlarmManager).cancel(pi)
     }
 
+    private fun scheduleFriendReminder(v: JSONObject, at: Long) {
+        val id = v.optString("id").hashCode()
+        val i = Intent(this, ReminderReceiver::class.java).apply {
+            putExtra("text", "🔔 " + v.optString("fromName") + ": " + v.optString("text"))
+            putExtra("id", id)
+        }
+        val pi = PendingIntent.getBroadcast(this, id, i,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        (getSystemService(ALARM_SERVICE) as AlarmManager)
+            .setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
+    }
+
     private fun deleteNote(n: JSONObject) {
         cancelAlarm(n)
         if (n.optString("type") == "voice") File(n.optString("audioPath")).delete()
@@ -1193,31 +1262,5 @@ class MainActivity : Activity() {
         } catch (e: Exception) {
             Toast.makeText(this, "Oynatılamadı", Toast.LENGTH_SHORT).show()
         }
-    }
-
-    private fun scheduleFriendReminder(v: JSONObject, at: Long) {
-        val id = v.optString("id").hashCode()
-        val i = Intent(this, ReminderReceiver::class.java).apply {
-            putExtra("text", "🔔 " + v.optString("fromName") + ": " + v.optString("text"))
-            putExtra("id", id)
-        }
-        val pi = PendingIntent.getBroadcast(this, id, i,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        (getSystemService(ALARM_SERVICE) as AlarmManager)
-            .setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
-    }
-
-    private fun showReminderNotif(v: JSONObject) {
-        val id = v.optString("id").hashCode()
-        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        val b = if (Build.VERSION.SDK_INT >= 26)
-            android.app.Notification.Builder(this, "yakala_rem")
-        else @Suppress("DEPRECATION") android.app.Notification.Builder(this)
-        b.setSmallIcon(R.drawable.ic_yakala)
-            .setContentTitle("🔔 " + v.optString("fromName"))
-            .setContentText(v.optString("text"))
-            .setStyle(android.app.Notification.BigTextStyle().bigText(v.optString("text")))
-            .setAutoCancel(true)
-        nm.notify(id, b.build())
     }
 }
