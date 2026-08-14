@@ -31,7 +31,7 @@ object Lang {
             "noFriends" to "Henüz arkadaş yok", "futureTime" to "Gelecek bir zaman seç", "noPlay" to "Oynatılamadı",
             "recErr" to "Kayıt hatası", "sttNo" to "Cihazda konuşma tanıma yok", "noNet" to "⚠️ İnternet yok, çeviri çalışmaz",
             "noSpeech" to "⚠️ Konuşma algılanmadı", "firstVoice" to "Önce ses kaydını bitir", "firstText" to "Önce metin kaydını bitir",
-            "sharedSaved" to "✅ Paylaşılan metin kaydedildi", "newNote" to "📬 Yeni not isteği var", "delTitle" to "Notu sil"
+            "sharedSaved" to "✅ Paylaşılan metin kaydedildi", "newNote" to "📬 Yeni not isteği var", "delTitle" to "Notu sil", "shakeOn" to "📳 Sallayınca dinle: AÇIK", "shakeOff" to "📳 Sallayınca dinle: KAPALI", "ready" to "⚡ Yakala hazır — sallayınca dinler"
         ),
         "en" to mapOf(
             "hint" to "What's on your mind?\n(first line becomes title, optional)",
@@ -60,7 +60,7 @@ object Lang {
             "noFriends" to "No friends yet", "futureTime" to "Pick a future time", "noPlay" to "Cannot play",
             "recErr" to "Recording error", "sttNo" to "No speech recognition on device", "noNet" to "⚠️ No internet, transcription off",
             "noSpeech" to "⚠️ No speech detected", "firstVoice" to "Finish voice recording first", "firstText" to "Finish text recording first",
-            "sharedSaved" to "✅ Shared text saved", "newNote" to "📬 New note request", "delTitle" to "Delete note"
+            "sharedSaved" to "✅ Shared text saved", "newNote" to "📬 New note request", "delTitle" to "Delete note", "shakeOn" to "📳 Shake to listen: ON", "shakeOff" to "📳 Shake to listen: OFF", "ready" to "⚡ Yakala ready — shake to listen"
         ),
         "ru" to mapOf(
             "hint" to "Что у тебя на уме?\n(первая строка — заголовок, необязательно)",
@@ -89,7 +89,7 @@ object Lang {
             "noFriends" to "Пока нет друзей", "futureTime" to "Выберите будущее время", "noPlay" to "Не воспроизводится",
             "recErr" to "Ошибка записи", "sttNo" to "Нет распознавания речи", "noNet" to "⚠️ Нет интернета",
             "noSpeech" to "⚠️ Речь не распознана", "firstVoice" to "Сначала завершите запись", "firstText" to "Сначала завершите запись",
-            "sharedSaved" to "✅ Текст сохранён", "newNote" to "📬 Новый запрос", "delTitle" to "Удалить заметку"
+            "sharedSaved" to "✅ Текст сохранён", "newNote" to "📬 Новый запрос", "delTitle" to "Удалить заметку", "shakeOn" to "📳 Трясти для записи: ВКЛ", "shakeOff" to "📳 Трясти для записи: ВЫКЛ", "ready" to "⚡ Yakala готова — тряхните"
         ),
         "zh" to mapOf(
             "hint" to "你在想什么？\n(第一行作为标题，可选)",
@@ -118,7 +118,7 @@ object Lang {
             "noFriends" to "暂无好友", "futureTime" to "请选择未来时间", "noPlay" to "无法播放",
             "recErr" to "录音错误", "sttNo" to "设备无语音识别", "noNet" to "⚠️ 无网络",
             "noSpeech" to "⚠️ 未检测到语音", "firstVoice" to "请先完成录音", "firstText" to "请先完成录音",
-            "sharedSaved" to "✅ 已保存分享文本", "newNote" to "📬 新笔记请求", "delTitle" to "删除笔记"
+            "sharedSaved" to "✅ 已保存分享文本", "newNote" to "📬 新笔记请求", "delTitle" to "删除笔记", "shakeOn" to "📳 摇动监听：开", "shakeOff" to "📳 摇动监听：关", "ready" to "⚡ Yakala 就绪 — 摇动开始"
         )
     )
     fun t(l: String, k: String): String = S[l]?.get(k) ?: S["tr"]?.get(k) ?: k

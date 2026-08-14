@@ -774,6 +774,10 @@ class MainActivity : Activity() {
 
         pollHandler.postDelayed(pollRunnable, 3000)
         Thread { ensureIdentitySync() }.start()
+        if (prefs.getBoolean("shake", false)) {
+            val si = Intent(this, ListenService::class.java)
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(si) else startService(si)
+        }
         loadScheduled(); handler.postDelayed(sendTicker, 15000)
     }
 
@@ -867,16 +871,36 @@ class MainActivity : Activity() {
             if (isDark) L("toLight") else L("toDark"),
             L("backup"),
             L("restore"),
+            if (prefs.getBoolean("shake", false)) L("shakeOn") else L("shakeOff"),
+            L("backup"),
+            L("restore"),
             L("about")
         )
         AlertDialog.Builder(this).setTitle(L("settings")).setItems(items) { _, w ->
             when (w) {
                 0 -> { prefs.edit().putBoolean("dark", !isDark).apply(); recreate() }
-                1 -> exportNotes()
-                2 -> importNotes()
-                3 -> Toast.makeText(this, "⚡ Yakala v2.1 🔐", Toast.LENGTH_SHORT).show()
+                1 -> toggleShake()
+                2 -> exportNotes()
+                3 -> importNotes()
+                4 -> Toast.makeText(this, "⚡ Yakala v2.2 🔐", Toast.LENGTH_SHORT).show()
             }
         }.show()
+    }
+
+    private fun toggleShake() {
+        val on = prefs.getBoolean("shake", false)
+        if (on) {
+            stopService(Intent(this, ListenService::class.java))
+            prefs.edit().putBoolean("shake", false).apply()
+        } else {
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 100); return
+            }
+            prefs.edit().putBoolean("shake", true).apply()
+            val i = Intent(this, ListenService::class.java)
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(i) else startService(i)
+        }
+        settingsDialog()
     }
 
     private fun exportNotes() {
