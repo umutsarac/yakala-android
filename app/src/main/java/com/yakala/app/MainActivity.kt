@@ -103,6 +103,8 @@ class MainActivity : Activity() {
     private val RED_SOFT get() = Color.parseColor("#d97b7b")
     private val GREEN_SOFT get() = Color.parseColor(if (isDark) "#7fd7a4" else "#4c9a6b")
 
+    private fun L(k: String) = Lang.t(prefs.getString("lang", "tr")!!, k)
+
     private val serverUrl get() = prefs.getString("server", null) ?: DEFAULT_SERVER
     private val myUid get() = prefs.getString("uid", null)
     private val myCode: String get() {
@@ -600,47 +602,39 @@ class MainActivity : Activity() {
         }
         val titleRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = android.view.Gravity.CENTER_VERTICAL
+            gravity = android.view.Gravity.END
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(10) }
         }
-        val title = TextView(this).apply {
-            text = "⚡ Yakala"
-            textSize = 26f
-            setTextColor(TITLE)
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        fun iconBtn(emoji: String, onClick: () -> Unit): TextView = TextView(this).apply {
+            text = emoji; textSize = 17f
+            gravity = android.view.Gravity.CENTER
+            background = roundBg(SURFACE, 19)
+            elevation = 4f
+            layoutParams = LinearLayout.LayoutParams(dp(38), dp(38)).apply { marginStart = dp(8) }
+            setOnClickListener { onClick() }
         }
-        val friendsBtn = TextView(this).apply {
-            text = "👥"; textSize = 20f
-            setPadding(dp(8), dp(6), dp(8), dp(6))
-            setOnClickListener { friendsDialog() }
-        }
-        val searchToggle = TextView(this).apply {
-            text = "🔍"; textSize = 20f
-            setPadding(dp(8), dp(6), dp(8), dp(6))
-            setOnClickListener {
-                if (searchInput.visibility == View.VISIBLE) {
-                    searchInput.visibility = View.GONE; searchInput.setText("")
-                } else {
-                    searchInput.visibility = View.VISIBLE; searchInput.requestFocus()
-                }
+        titleRow.addView(iconBtn("👥") { friendsDialog() })
+        titleRow.addView(iconBtn("🌐") { langDialog() })
+        titleRow.addView(iconBtn("🔍") {
+            if (searchInput.visibility == View.VISIBLE) {
+                searchInput.visibility = View.GONE; searchInput.setText("")
+            } else {
+                searchInput.visibility = View.VISIBLE; searchInput.requestFocus()
             }
-        }
-        val settingsBtn = TextView(this).apply {
-            text = "⚙️"; textSize = 22f
-            setPadding(dp(8), dp(6), 0, dp(6))
-            setOnClickListener { settingsDialog() }
-        }
-        titleRow.addView(title); titleRow.addView(friendsBtn)
-        titleRow.addView(searchToggle); titleRow.addView(settingsBtn)
+        })
+        titleRow.addView(iconBtn("⚙️") { settingsDialog() })
 
         searchInput = EditText(this).apply {
-            hint = "🔍 Ara..."
+            hint = L("search")
             setTextColor(TXT); setHintTextColor(META)
             background = roundBg(SURFACE)
             setPadding(dp(16), dp(10), dp(16), dp(10))
             visibility = View.GONE
         }
         input = EditText(this).apply {
-            hint = "Aklına ne geldi?\n(ilk satır başlık olur, zorunlu değil)"
+            hint = L("hint")
             setTextColor(TXT); setHintTextColor(META)
             background = roundBg(SURFACE)
             setPadding(dp(16), dp(12), dp(16), dp(12))
@@ -676,17 +670,17 @@ class MainActivity : Activity() {
             marginStart = dp(5); marginEnd = dp(5)
         } }
         val save = Button(this).apply {
-            text = "✓ Kaydet"; setTextColor(Color.WHITE); textSize = 14f
+            text = L("save"); setTextColor(Color.WHITE); textSize = 14f
             minHeight = 0; setPadding(0, dp(8), 0, dp(8))
             background = roundBg(AMBER_SOFT); layoutParams = mkLp()
         }
         voiceBtn = Button(this).apply {
-            text = "🎤 Ses"; setTextColor(Color.WHITE); textSize = 14f
+            text = L("voice"); setTextColor(Color.WHITE); textSize = 14f
             minHeight = 0; setPadding(0, dp(8), 0, dp(8))
             background = roundBg(BTN_SOFT); layoutParams = mkLp()
         }
         textBtn = Button(this).apply {
-            text = "🗣️ Metin"; setTextColor(Color.WHITE); textSize = 14f
+            text = L("stt"); setTextColor(Color.WHITE); textSize = 14f
             minHeight = 0; setPadding(0, dp(8), 0, dp(8))
             background = roundBg(BTN_SOFT); layoutParams = mkLp()
         }
@@ -696,12 +690,12 @@ class MainActivity : Activity() {
             setPadding(0, dp(8), 0, dp(4))
         }
         val h1 = TextView(this).apply {
-            text = "📋 NOTLARIM"; textSize = 12f; setTextColor(META)
+            text = L("myNotes"); textSize = 12f; setTextColor(META)
             setPadding(0, 0, 0, dp(6))
         }
         val listMine = ListView(this).apply { divider = null; dividerHeight = dp(10) }
         val h2 = TextView(this).apply {
-            text = "👥 ARKADAŞ NOTLARI"; textSize = 12f; setTextColor(META)
+            text = L("frNotes"); textSize = 12f; setTextColor(META)
             setPadding(0, dp(8), 0, dp(6))
         }
         val listFriends = ListView(this).apply { divider = null; dividerHeight = dp(8) }
@@ -716,6 +710,15 @@ class MainActivity : Activity() {
         layout.addView(listMine, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         layout.addView(h2)
         layout.addView(listFriends, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        val brand = TextView(this).apply {
+            text = "⚡ Y A K A L A"
+            textSize = 11f
+            letterSpacing = 0.3f
+            setTextColor(META)
+            gravity = android.view.Gravity.CENTER
+            setPadding(0, dp(10), 0, dp(2))
+        }
+        layout.addView(brand)
         setContentView(layout)
 
         loadNotes()
@@ -850,19 +853,28 @@ class MainActivity : Activity() {
         return SimpleDateFormat(if (sameDay) "HH:mm" else "d MMM HH:mm", Locale("tr")).format(Date(ts))
     }
 
+    private fun langDialog() {
+        val codes = Lang.LANGS
+        val names = codes.map { Lang.NAMES[it]!! }
+        AlertDialog.Builder(this).setTitle(L("lang")).setItems(names.toTypedArray()) { _, w ->
+            prefs.edit().putString("lang", codes[w]).apply()
+            recreate()
+        }.show()
+    }
+
     private fun settingsDialog() {
         val items = arrayOf(
-            if (isDark) "☀️ Açık temaya geç" else "🌙 Karanlık temaya geç",
-            "📤 Yedekle (JSON)",
-            "📥 Geri yükle",
-            "ℹ️ Yakala v2.0 🔐"
+            if (isDark) L("toLight") else L("toDark"),
+            L("backup"),
+            L("restore"),
+            L("about")
         )
-        AlertDialog.Builder(this).setTitle("⚙️ Ayarlar").setItems(items) { _, w ->
+        AlertDialog.Builder(this).setTitle(L("settings")).setItems(items) { _, w ->
             when (w) {
                 0 -> { prefs.edit().putBoolean("dark", !isDark).apply(); recreate() }
                 1 -> exportNotes()
                 2 -> importNotes()
-                3 -> Toast.makeText(this, "⚡ Yakala v2.0 — güvenli bağlantı", Toast.LENGTH_SHORT).show()
+                3 -> Toast.makeText(this, "⚡ Yakala v2.1 🔐", Toast.LENGTH_SHORT).show()
             }
         }.show()
     }
@@ -924,7 +936,7 @@ class MainActivity : Activity() {
         when (requestCode) {
             REQ_EXPORT -> {
                 contentResolver.openOutputStream(uri)?.use { it.write(exportJson().toByteArray()) }
-                Toast.makeText(this, "✅ Yedek kaydedildi", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, L("bSaved"), Toast.LENGTH_SHORT).show()
             }
             REQ_IMPORT -> {
                 val text = contentResolver.openInputStream(uri)?.use { String(it.readBytes()) } ?: return
@@ -1145,7 +1157,7 @@ class MainActivity : Activity() {
         if (requestCode == 100 && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             pendingAction?.invoke(); pendingAction = null
         } else if (requestCode != 101) {
-            Toast.makeText(this, "Mikrofon izni gerekli", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, L("mic"), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -1162,9 +1174,9 @@ class MainActivity : Activity() {
             }
             mode = 1
             recordStart = System.currentTimeMillis()
-            voiceBtn.text = "■ Bitir"
+            voiceBtn.text = L("stop")
             voiceBtn.background = roundBg(RED_SOFT)
-            statusText.text = "🔴 Kaydediliyor... bitirmek için ■ Bitir"
+            statusText.text = L("rec")
             tick()
         } catch (e: Exception) {
             Toast.makeText(this, "Kayıt hatası: ${e.message}", Toast.LENGTH_LONG).show()
@@ -1174,7 +1186,7 @@ class MainActivity : Activity() {
     private fun tick() {
         if (mode != 1) return
         val s = (System.currentTimeMillis() - recordStart) / 1000
-        statusText.text = "🔴 ${fmtDur(s)} — bitirmek için ■ Bitir"
+        statusText.text = "🔴 ${fmtDur(s)} " + L("stop")
         handler.postDelayed({ tick() }, 1000)
     }
 
@@ -1182,7 +1194,7 @@ class MainActivity : Activity() {
         mode = 0
         try { recorder?.stop() } catch (_: Exception) {}
         recorder?.release(); recorder = null
-        voiceBtn.text = "🎤 Ses"
+        voiceBtn.text = L("voice")
         voiceBtn.background = roundBg(BTN_SOFT)
         val f = currentFile
         if (f != null && f.exists() && f.length() > 0) {
@@ -1194,7 +1206,7 @@ class MainActivity : Activity() {
             o.put("createdAt", System.currentTimeMillis())
             notes.add(0, o)
             persist()
-            statusText.text = "✅ Sesli not kaydedildi"
+            statusText.text = L("vsaved")
         } else statusText.text = ""
     }
 
@@ -1211,7 +1223,7 @@ class MainActivity : Activity() {
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         }
         recognizer!!.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(p: Bundle?) { statusText.text = "🎙️ Dinliyorum, konuş..." }
+            override fun onReadyForSpeech(p: Bundle?) { statusText.text = L("listen") }
             override fun onBeginningOfSpeech() {}
             override fun onRmsChanged(v: Float) {}
             override fun onBufferReceived(b: ByteArray?) {}
@@ -1238,19 +1250,19 @@ class MainActivity : Activity() {
         })
         recognizer!!.startListening(ri)
         mode = 2
-        textBtn.text = "■ Bitir"
+        textBtn.text = L("stop")
         textBtn.background = roundBg(RED_SOFT)
-        statusText.text = "🎙️ Dinliyorum, konuş..."
+        statusText.text = L("listen")
     }
 
     private fun stopText() {
         mode = 0
         recognizer?.destroy(); recognizer = null
-        textBtn.text = "🗣️ Metin"
+        textBtn.text = L("stt")
         textBtn.background = roundBg(BTN_SOFT)
         val tr = transcript.toString().trim()
-        if (tr.isNotEmpty()) { addTextNote(tr); statusText.text = "✅ Not kaydedildi" }
-        else statusText.text = "⚠️ Konuşma algılanmadı"
+        if (tr.isNotEmpty()) { addTextNote(tr); statusText.text = L("saved") }
+        else statusText.text = L("noSpeech")
     }
 
     private fun playNote(n: JSONObject) {
@@ -1259,10 +1271,10 @@ class MainActivity : Activity() {
             player = MediaPlayer()
             player!!.setDataSource(n.optString("audioPath"))
             player!!.prepare(); player!!.start()
-            Toast.makeText(this, "🔊 Çalıyor", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, L("playing"), Toast.LENGTH_SHORT).show()
             player!!.setOnCompletionListener { player?.release(); player = null }
         } catch (e: Exception) {
-            Toast.makeText(this, "Oynatılamadı", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, L("noPlay"), Toast.LENGTH_SHORT).show()
         }
     }
 }
