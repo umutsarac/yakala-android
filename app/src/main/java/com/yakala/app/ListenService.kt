@@ -79,7 +79,9 @@ class ListenService : Service(), SensorEventListener {
                 if (peaks.size >= 4) {
                     peaks.clear()
                     if (listening) {
-                        stopListening(true)
+                        // dinleme sirasinda salla -> kaydi bitir ve KAYDET
+                        lastShake = now
+                        try { recognizer?.stopListening() } catch (_: Exception) {}
                     } else if (now - lastShake > 6000) {
                         lastShake = now
                         startListening()
