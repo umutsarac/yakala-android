@@ -160,7 +160,7 @@ class ListenService : Service(), SensorEventListener {
     private fun finish(sb: StringBuilder) {
         if (!listening) return
         listening = false
-        try { recognizer?.stop() } catch (_: Exception) {}
+        try { recognizer?.stopListening() } catch (_: Exception) {}
         try { recognizer?.destroy() } catch (_: Exception) {}
         recognizer = null
         val text = sb.toString().trim()
