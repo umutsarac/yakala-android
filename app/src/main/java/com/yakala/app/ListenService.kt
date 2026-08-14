@@ -72,9 +72,9 @@ class ListenService : Service(), SensorEventListener {
         val x = e.values[0]; val y = e.values[1]; val z = e.values[2]
         val g = Math.sqrt((x * x + y * y + z * z).toDouble()) / SensorManager.GRAVITY_EARTH
         val now = System.currentTimeMillis()
-        if (g > 2.6 && lastG <= 2.6) {
+        if (g > 2.0 && lastG <= 2.0) {
             if (now - peaks.lastOrNull().orDefault(0) > 80) {
-                peaks.removeAll { now - it > 2000 }
+                peaks.removeAll { now - it > 2500 }
                 peaks.add(now)
                 if (peaks.size >= 4) {
                     peaks.clear()
