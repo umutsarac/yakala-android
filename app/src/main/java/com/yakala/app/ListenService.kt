@@ -29,8 +29,8 @@ class ListenService : Service(), SensorEventListener {
     private var recognizer: SpeechRecognizer? = null
     private var listening = false
     private var lastShake = 0L
-    private var shakeCount = 0
-    private var lastShakeT = 0L
+    private var lastG = 1.0
+    private val peaks = mutableListOf<Long>()
 
     override fun onBind(i: Intent?): IBinder? = null
 
@@ -50,7 +50,7 @@ class ListenService : Service(), SensorEventListener {
             startForeground(42, notif(Lang.t(lang(), "ready")))
         }
         sm = getSystemService(SENSOR_SERVICE) as SensorManager
-        sm.registerListener(this, sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER), SensorManager.SENSOR_DELAY_NORMAL)
+        sm.registerListener(this, sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER), SensorManager.SENSOR_DELAY_GAME)
         val pm = getSystemService(POWER_SERVICE) as PowerManager
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "yakala:listen")
         wakeLock?.acquire()
@@ -72,16 +72,25 @@ class ListenService : Service(), SensorEventListener {
         val x = e.values[0]; val y = e.values[1]; val z = e.values[2]
         val g = Math.sqrt((x * x + y * y + z * z).toDouble()) / SensorManager.GRAVITY_EARTH
         val now = System.currentTimeMillis()
-        if (g > 2.2) {
-            if (now - lastShakeT < 800) shakeCount++ else shakeCount = 1
-            lastShakeT = now
-            if (shakeCount >= 3 && now - lastShake > 5000) {
-                lastShake = now
-                shakeCount = 0
-                startListening()
+        if (g > 2.6 && lastG <= 2.6) {
+            if (now - peaks.lastOrNull().orDefault(0) > 80) {
+                peaks.removeAll { now - it > 2000 }
+                peaks.add(now)
+                if (peaks.size >= 4) {
+                    peaks.clear()
+                    if (listening) {
+                        stopListening(true)
+                    } else if (now - lastShake > 6000) {
+                        lastShake = now
+                        startListening()
+                    }
+                }
             }
         }
+        lastG = g
     }
+
+    private fun Long?.orDefault(d: Long) = this ?: d
 
     override fun onAccuracyChanged(s: Sensor?, a: Int) {}
 
@@ -136,9 +145,22 @@ class ListenService : Service(), SensorEventListener {
         }
     }
 
+    private fun stopListening(cancelled: Boolean) {
+        if (!listening) return
+        listening = false
+        try { recognizer?.cancel() } catch (_: Exception) {}
+        try { recognizer?.destroy() } catch (_: Exception) {}
+        recognizer = null
+        if (cancelled) {
+            beep(3)
+            nm.notify(43, notif(Lang.t(lang(), "cancelled")))
+        }
+    }
+
     private fun finish(sb: StringBuilder) {
         if (!listening) return
         listening = false
+        try { recognizer?.stop() } catch (_: Exception) {}
         try { recognizer?.destroy() } catch (_: Exception) {}
         recognizer = null
         val text = sb.toString().trim()
