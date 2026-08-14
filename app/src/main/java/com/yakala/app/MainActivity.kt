@@ -166,7 +166,8 @@ class MainActivity : Activity() {
         conn("/users/$u/name", "PUT", "\"$myName\"")
     }
 
-    private fun conn(path: String, method: String, body: String? = null): String? = try {
+    private fun conn(path: String, method: String, body: String? = null): String? {
+        return try {
         ensureAuthSync()
         val tok = prefs.getString("idToken", null) ?: return null
         val c = URL("$serverUrl$path.json?auth=$tok").openConnection() as HttpURLConnection
@@ -181,6 +182,7 @@ class MainActivity : Activity() {
             c.inputStream.readBytes().toString(Charsets.UTF_8) else null
         c.disconnect(); s
     } catch (e: Exception) { null }
+    }
 
     private val pollHandler = Handler(Looper.getMainLooper())
     private val pollRunnable = object : Runnable {
