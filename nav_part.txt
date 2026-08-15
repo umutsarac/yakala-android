@@ -1,0 +1,42 @@
+    private fun buildNav() {
+        navRow.removeAllViews()
+        fun item(icon: String, label: String, key: String, onClick: () -> Unit) {
+            val v = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = android.view.Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                background = if (tab == key) roundBg(ACCENT, 14) else null
+                setPadding(0, dp(6), 0, dp(6))
+                setOnClickListener { onClick() }
+            }
+            v.addView(TextView(this).apply { text = icon; textSize = 15f; gravity = android.view.Gravity.CENTER; setTextColor(if (tab == key) Color.WHITE else META) })
+            v.addView(TextView(this).apply { text = label; textSize = 10f; gravity = android.view.Gravity.CENTER; setTextColor(if (tab == key) Color.WHITE else META) })
+            navRow.addView(v)
+        }
+        item("🏠", "Ana Sayfa", "home") {
+            tab = "home"; favOnly = false; query = ""; searchInput.setText(""); updateList(); buildNav()
+        }
+        item("🔍", "Arama", "search") {
+            tab = "search"
+            searchInput.visibility = View.VISIBLE
+            searchInput.requestFocus()
+            buildNav()
+        }
+        val fab = TextView(this).apply {
+            text = "＋"; textSize = 22f; setTextColor(Color.WHITE)
+            gravity = android.view.Gravity.CENTER
+            background = roundBg(ACCENT, 24)
+            layoutParams = LinearLayout.LayoutParams(dp(52), dp(52)).apply { marginStart = dp(6); marginEnd = dp(6) }
+            setOnClickListener {
+                input.requestFocus()
+                val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+                imm.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
+            }
+        }
+        navRow.addView(fab)
+        item("🗂", "Arşiv", "archive") { Toast.makeText(this, "Yakında", Toast.LENGTH_SHORT).show() }
+        item("⭐", "Favoriler", "fav") {
+            tab = "fav"; favOnly = true; updateList(); buildNav()
+        }
+    }
+

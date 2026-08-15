@@ -64,8 +64,12 @@ class MainActivity : Activity() {
     private lateinit var input: EditText
     private lateinit var searchInput: EditText
     private lateinit var statusText: TextView
-    private lateinit var voiceBtn: Button
-    private lateinit var textBtn: Button
+    private lateinit var voiceBtn: TextView
+    private lateinit var textBtn: TextView
+    private lateinit var navRow: LinearLayout
+    private lateinit var adSlot: android.widget.FrameLayout
+    private var favOnly = false
+    private var tab = "home"
 
     private var recorder: MediaRecorder? = null
     private var recognizer: SpeechRecognizer? = null
@@ -95,12 +99,19 @@ class MainActivity : Activity() {
     private fun roundBg(color: Int, radiusDp: Int = 14) =
         GradientDrawable().apply { cornerRadius = dp(radiusDp).toFloat(); setColor(color) }
 
-    private val isDark get() = prefs.getBoolean("dark", false)
-    private val BG get() = Color.parseColor(if (isDark) "#141a22" else "#f6f7f9")
-    private val SURFACE get() = Color.parseColor(if (isDark) "#1f2937" else "#ffffff")
+    private val isDark get() = prefs.getBoolean("dark", true)
+    private val BG get() = Color.parseColor(if (isDark) "#0b1020" else "#f6f7f9")
+    private val SURFACE2 get() = Color.parseColor(if (isDark) "#1b2240" else "#eef0f8")
+    private val BORDER get() = Color.parseColor(if (isDark) "#252c4d" else "#e5e7f0")
+    private val ACCENT get() = Color.parseColor("#6d5df6")
+    private fun grad(colors: IntArray, rDp: Int) = android.graphics.drawable.GradientDrawable(
+        android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT, colors
+    ).apply { cornerRadius = dp(rDp).toFloat() }
+    private fun tint(hex: Int, a: Int) = Color.argb(a, Color.red(hex), Color.green(hex), Color.blue(hex))
+    private val SURFACE get() = Color.parseColor(if (isDark) "#151b33" else "#ffffff")
     private val TITLE get() = Color.parseColor(if (isDark) "#e8b464" else "#c08a3e")
-    private val TXT get() = Color.parseColor(if (isDark) "#f3f4f6" else "#1f2937")
-    private val META get() = Color.parseColor(if (isDark) "#9aa5b1" else "#8a94a0")
+    private val TXT get() = Color.parseColor(if (isDark) "#eef0ff" else "#1f2937")
+    private val META get() = Color.parseColor(if (isDark) "#8f96c0" else "#8a94a0")
     private val BTN_SOFT get() = Color.parseColor(if (isDark) "#3d4a5c" else "#64748b")
     private val AMBER_SOFT get() = Color.parseColor(if (isDark) "#d9a441" else "#e2a750")
     private val RED_SOFT get() = Color.parseColor("#d97b7b")
@@ -600,128 +611,163 @@ class MainActivity : Activity() {
 
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(24), dp(20), dp(10))
             setBackgroundColor(BG)
+            setPadding(0, dp(14), 0, 0)
         }
-        val titleRow = LinearLayout(this).apply {
+        val topBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = android.view.Gravity.END
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = dp(10) }
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(dp(14), 0, dp(14), dp(6))
+        }
+        val menuBtn = TextView(this).apply {
+            text = "☰"; textSize = 20f; setTextColor(TXT)
+            setPadding(dp(8), dp(6), dp(8), dp(6))
+            setOnClickListener { settingsDialog() }
+        }
+        val brand = TextView(this).apply {
+            text = "⚡ Y A K A L A"; textSize = 16f; setTextColor(TXT)
+            paint.isFakeBoldText = true
+            gravity = android.view.Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val themeBtn = TextView(this).apply {
+            text = if (isDark) "☀️" else "🌙"; textSize = 15f
+            gravity = android.view.Gravity.CENTER
+            background = roundBg(ACCENT, 18)
+            layoutParams = LinearLayout.LayoutParams(dp(36), dp(36))
+            setOnClickListener { prefs.edit().putBoolean("dark", !isDark).apply(); recreate() }
+        }
+        topBar.addView(menuBtn); topBar.addView(brand); topBar.addView(themeBtn)
+        val iconRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER
+            setPadding(0, dp(4), 0, dp(10))
         }
         fun iconBtn(emoji: String, onClick: () -> Unit): TextView = TextView(this).apply {
-            text = emoji; textSize = 17f
+            text = emoji; textSize = 16f
             gravity = android.view.Gravity.CENTER
-            background = roundBg(SURFACE, 19)
-            elevation = 4f
-            layoutParams = LinearLayout.LayoutParams(dp(38), dp(38)).apply { marginStart = dp(8) }
+            background = roundBg(SURFACE2, 20)
+            layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginStart = dp(6); marginEnd = dp(6) }
             setOnClickListener { onClick() }
         }
-        titleRow.addView(iconBtn("👥") { friendsDialog() })
-        titleRow.addView(iconBtn("🌐") { langDialog() })
-        titleRow.addView(iconBtn("🔍") {
-            if (searchInput.visibility == View.VISIBLE) {
-                searchInput.visibility = View.GONE; searchInput.setText("")
-            } else {
-                searchInput.visibility = View.VISIBLE; searchInput.requestFocus()
-            }
+        iconRow.addView(iconBtn("👥") { friendsDialog() })
+        iconRow.addView(iconBtn("🌐") { langDialog() })
+        iconRow.addView(iconBtn("🔍") {
+            if (searchInput.visibility == View.VISIBLE) { searchInput.visibility = View.GONE; searchInput.setText("") }
+            else { searchInput.visibility = View.VISIBLE; searchInput.requestFocus() }
         })
-        titleRow.addView(iconBtn("⚙️") { settingsDialog() })
-
+        iconRow.addView(iconBtn("⚙️") { settingsDialog() })
         searchInput = EditText(this).apply {
             hint = L("search")
             setTextColor(TXT); setHintTextColor(META)
-            background = roundBg(SURFACE)
-            setPadding(dp(16), dp(10), dp(16), dp(10))
+            background = roundBg(SURFACE, 16)
+            setPadding(dp(14), dp(10), dp(14), dp(10))
             visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(dp(16), 0, dp(16), dp(10)) }
+        }
+        val inputCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = roundBg(SURFACE, 20)
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(dp(16), 0, dp(16), dp(12)) }
         }
         input = EditText(this).apply {
             hint = L("hint")
             setTextColor(TXT); setHintTextColor(META)
-            background = roundBg(SURFACE)
-            setPadding(dp(16), dp(12), dp(16), dp(12))
-            minLines = 3; maxLines = 6
+            setBackgroundColor(Color.TRANSPARENT)
+            minLines = 2; maxLines = 5
             gravity = android.view.Gravity.TOP
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = dp(8) }
+            setPadding(0, 0, 0, dp(8))
         }
-        val bulletRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = dp(10) }
-        }
-        val chip = dp(36)
-        listOf("•", "✅", "📞", "", "💡", "📅", "⭐").forEach { s ->
-            val b = TextView(this).apply {
-                text = s; textSize = 15f
+        val chipRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val chipCols = listOf(0xFF16a34a.toInt(), 0xFF0ea5e9.toInt(), 0xFFeab308.toInt(), 0xFFef4444.toInt(), 0xFFf59e0b.toInt())
+        listOf("✅", "📞", "💡", "📅", "⭐").forEachIndexed { i, sym ->
+            val c = TextView(this).apply {
+                text = sym; textSize = 14f
                 gravity = android.view.Gravity.CENTER
-                background = roundBg(SURFACE, 12)
+                background = roundBg(tint(chipCols[i], 60), 17)
+                layoutParams = LinearLayout.LayoutParams(dp(34), dp(34)).apply { marginEnd = dp(8) }
                 setOnClickListener {
                     val cur = input.text.toString()
-                    input.setText(if (cur.isEmpty()) "$s " else "$cur\n$s ")
+                    input.setText(if (cur.isEmpty()) "$sym " else "$cur\n$sym ")
                     input.setSelection(input.text.length)
                 }
             }
-            bulletRow.addView(b, LinearLayout.LayoutParams(chip, chip).apply { marginEnd = dp(6) })
+            chipRow.addView(c)
         }
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val mkLp = { LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-            marginStart = dp(5); marginEnd = dp(5)
-        } }
-        val save = Button(this).apply {
-            text = L("save"); setTextColor(Color.WHITE); textSize = 14f
-            minHeight = 0; setPadding(0, dp(8), 0, dp(8))
-            background = roundBg(AMBER_SOFT); layoutParams = mkLp()
+        inputCard.addView(input)
+        inputCard.addView(chipRow)
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(16), 0, dp(16), dp(12))
         }
-        voiceBtn = Button(this).apply {
-            text = L("voice"); setTextColor(Color.WHITE); textSize = 14f
-            minHeight = 0; setPadding(0, dp(8), 0, dp(8))
-            background = roundBg(BTN_SOFT); layoutParams = mkLp()
+        fun gBtn(t: String, c1: Int, c2: Int, onClick: () -> Unit): TextView = TextView(this).apply {
+            text = t; setTextColor(Color.WHITE); textSize = 14f
+            paint.isFakeBoldText = true
+            gravity = android.view.Gravity.CENTER
+            background = grad(intArrayOf(c1, c2), 16)
+            layoutParams = LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginStart = dp(5); marginEnd = dp(5) }
+            setOnClickListener { onClick() }
         }
-        textBtn = Button(this).apply {
-            text = L("stt"); setTextColor(Color.WHITE); textSize = 14f
-            minHeight = 0; setPadding(0, dp(8), 0, dp(8))
-            background = roundBg(BTN_SOFT); layoutParams = mkLp()
-        }
+        val save = gBtn("＋ KAYDET", 0xFF6a5af9.toInt(), 0xFF9a4df0.toInt()) { }
+        voiceBtn = gBtn(L("voice"), 0xFF0891b2.toInt(), 0xFF1d4ed8.toInt()) { }
+        textBtn = gBtn(L("stt"), 0xFFf97316.toInt(), 0xFFec4899.toInt()) { }
         row.addView(save); row.addView(voiceBtn); row.addView(textBtn)
         statusText = TextView(this).apply {
             textSize = 13f; setTextColor(GREEN_SOFT)
-            setPadding(0, dp(8), 0, dp(4))
+            setPadding(dp(18), 0, dp(18), dp(4))
         }
-        val h1 = TextView(this).apply {
-            text = L("myNotes"); textSize = 12f; setTextColor(META)
-            setPadding(0, 0, 0, dp(6))
+        fun header(t: String, right: String, onRight: () -> Unit): LinearLayout {
+            val h = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                setPadding(dp(18), dp(6), dp(18), dp(6))
+            }
+            h.addView(TextView(this).apply {
+                text = t; textSize = 12f; setTextColor(META)
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            h.addView(TextView(this).apply {
+                text = right; textSize = 11f; setTextColor(ACCENT)
+                setOnClickListener { onRight() }
+            })
+            return h
         }
         val listMine = ListView(this).apply { divider = null; dividerHeight = dp(10) }
-        val h2 = TextView(this).apply {
-            text = L("frNotes"); textSize = 12f; setTextColor(META)
-            setPadding(0, dp(8), 0, dp(6))
-        }
         val listFriends = ListView(this).apply { divider = null; dividerHeight = dp(8) }
-
-        layout.addView(titleRow)
+        adSlot = android.widget.FrameLayout(this).apply {
+            background = roundBg(SURFACE2, 12)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(50)
+            ).apply { setMargins(dp(16), dp(6), dp(16), dp(6)) }
+            addView(TextView(this@MainActivity).apply {
+                text = "📢 Reklam Alanı (AdMob hazır)"; textSize = 11f; setTextColor(META)
+                gravity = android.view.Gravity.CENTER
+            })
+        }
+        navRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(dp(10), dp(6), dp(10), dp(8))
+        }
+        layout.addView(topBar)
+        layout.addView(iconRow)
         layout.addView(searchInput)
-        layout.addView(input)
-        layout.addView(bulletRow)
+        layout.addView(inputCard)
         layout.addView(row)
         layout.addView(statusText)
-        layout.addView(h1)
+        layout.addView(header("📒 " + L("myNotes"), "Tümünü gör ›") { favOnly = false; query = ""; searchInput.setText(""); updateList(); buildNav() })
         layout.addView(listMine, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
-        layout.addView(h2)
-        layout.addView(listFriends, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
-        val brand = TextView(this).apply {
-            text = "⚡ Y A K A L A"
-            textSize = 11f
-            letterSpacing = 0.3f
-            setTextColor(META)
-            gravity = android.view.Gravity.CENTER
-            setPadding(0, dp(10), 0, dp(2))
-        }
-        layout.addView(brand)
+        layout.addView(header("👥 " + L("frNotes"), "›") { Toast.makeText(this, "${fNotes.size} not", Toast.LENGTH_SHORT).show() })
+        layout.addView(listFriends, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 0.6f))
+        layout.addView(adSlot)
+        layout.addView(navRow)
+        buildNav()
         setContentView(layout)
 
         loadNotes()
@@ -859,6 +905,48 @@ class MainActivity : Activity() {
             d.get(Calendar.MONTH) == now.get(Calendar.MONTH) &&
             d.get(Calendar.YEAR) == now.get(Calendar.YEAR)
         return SimpleDateFormat(if (sameDay) "HH:mm" else "d MMM HH:mm", Locale("tr")).format(Date(ts))
+    }
+
+    private fun buildNav() {
+        navRow.removeAllViews()
+        fun item(icon: String, label: String, key: String, onClick: () -> Unit) {
+            val v = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = android.view.Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                background = if (tab == key) roundBg(ACCENT, 14) else null
+                setPadding(0, dp(6), 0, dp(6))
+                setOnClickListener { onClick() }
+            }
+            v.addView(TextView(this).apply { text = icon; textSize = 15f; gravity = android.view.Gravity.CENTER; setTextColor(if (tab == key) Color.WHITE else META) })
+            v.addView(TextView(this).apply { text = label; textSize = 10f; gravity = android.view.Gravity.CENTER; setTextColor(if (tab == key) Color.WHITE else META) })
+            navRow.addView(v)
+        }
+        item("🏠", "Ana Sayfa", "home") {
+            tab = "home"; favOnly = false; query = ""; searchInput.setText(""); updateList(); buildNav()
+        }
+        item("🔍", "Arama", "search") {
+            tab = "search"
+            searchInput.visibility = View.VISIBLE
+            searchInput.requestFocus()
+            buildNav()
+        }
+        val fab = TextView(this).apply {
+            text = "＋"; textSize = 22f; setTextColor(Color.WHITE)
+            gravity = android.view.Gravity.CENTER
+            background = roundBg(ACCENT, 24)
+            layoutParams = LinearLayout.LayoutParams(dp(52), dp(52)).apply { marginStart = dp(6); marginEnd = dp(6) }
+            setOnClickListener {
+                input.requestFocus()
+                val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+                imm.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
+            }
+        }
+        navRow.addView(fab)
+        item("🗂", "Arşiv", "archive") { Toast.makeText(this, "Yakında", Toast.LENGTH_SHORT).show() }
+        item("⭐", "Favoriler", "fav") {
+            tab = "fav"; favOnly = true; updateList(); buildNav()
+        }
     }
 
     private fun langDialog() {
@@ -1015,7 +1103,7 @@ class MainActivity : Activity() {
     private fun updateList() {
         visibleNotes.clear()
         val q = query.trim().lowercase()
-        val filtered = notes.filter { q.isEmpty() || display(it).lowercase().contains(q) }
+        val filtered = notes.filter { (!favOnly || it.optBoolean("pinned")) && (q.isEmpty() || display(it).lowercase().contains(q)) }
         visibleNotes.addAll(filtered.sortedWith(
             compareByDescending<JSONObject> { it.optBoolean("pinned") }
                 .thenByDescending { it.optLong("createdAt") }
@@ -1201,7 +1289,7 @@ class MainActivity : Activity() {
             mode = 1
             recordStart = System.currentTimeMillis()
             voiceBtn.text = L("stop")
-            voiceBtn.background = roundBg(RED_SOFT)
+            voiceBtn.background = grad(intArrayOf(0xFFdc2626.toInt(), 0xFFef4444.toInt()), 16)
             statusText.text = L("rec")
             tick()
         } catch (e: Exception) {
@@ -1221,7 +1309,7 @@ class MainActivity : Activity() {
         try { recorder?.stop() } catch (_: Exception) {}
         recorder?.release(); recorder = null
         voiceBtn.text = L("voice")
-        voiceBtn.background = roundBg(BTN_SOFT)
+        voiceBtn.background = grad(intArrayOf(0xFF0891b2.toInt(), 0xFF1d4ed8.toInt()), 16)
         val f = currentFile
         if (f != null && f.exists() && f.length() > 0) {
             val o = JSONObject()
@@ -1277,7 +1365,7 @@ class MainActivity : Activity() {
         recognizer!!.startListening(ri)
         mode = 2
         textBtn.text = L("stop")
-        textBtn.background = roundBg(RED_SOFT)
+        textBtn.background = grad(intArrayOf(0xFFdc2626.toInt(), 0xFFef4444.toInt()), 16)
         statusText.text = L("listen")
     }
 
@@ -1285,7 +1373,7 @@ class MainActivity : Activity() {
         mode = 0
         recognizer?.destroy(); recognizer = null
         textBtn.text = L("stt")
-        textBtn.background = roundBg(BTN_SOFT)
+        textBtn.background = grad(intArrayOf(0xFFf97316.toInt(), 0xFFec4899.toInt()), 16)
         val tr = transcript.toString().trim()
         if (tr.isNotEmpty()) { addTextNote(tr); statusText.text = L("saved") }
         else statusText.text = L("noSpeech")
