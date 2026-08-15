@@ -1120,6 +1120,9 @@ class MainActivity : Activity() {
             background = roundBg(ACCENT, 24)
             layoutParams = LinearLayout.LayoutParams(dp(52), dp(52)).apply { marginStart = dp(6); marginEnd = dp(6) }
             setOnClickListener {
+                tab = "home"
+                applyLayout()
+                buildNav()
                 input.requestFocus()
                 val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
                 imm.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
