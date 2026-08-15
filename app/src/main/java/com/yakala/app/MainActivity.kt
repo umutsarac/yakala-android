@@ -79,6 +79,16 @@ class MainActivity : Activity() {
     private lateinit var headerMine: LinearLayout
     private lateinit var headerFriends: LinearLayout
     private lateinit var mineToggle: TextView
+    private lateinit var mineTitle: TextView
+    private lateinit var mineDelete: TextView
+    private lateinit var frTitle: TextView
+    private lateinit var frToggle: TextView
+    private lateinit var frDelete: TextView
+    private lateinit var friendsPanel: android.widget.ScrollView
+    private val storeArc = mutableListOf<JSONObject>()
+    private lateinit var arcAdapter: NoteAdapter
+    private val expandedFriends = mutableSetOf<String>()
+    private var fullFr = false
 
     private var recorder: MediaRecorder? = null
     private var recognizer: SpeechRecognizer? = null
@@ -334,12 +344,10 @@ class MainActivity : Activity() {
             AlertDialog.Builder(this)
                 .setTitle("👤 " + n.optString("fromName"))
                 .setMessage(n.optString("text"))
-                .setPositiveButton("📋 Notlarıma ekle") { _, _ ->
-                    addTextNote("👤 " + n.optString("fromName") + ": " + n.optString("text"))
-                }
-                .setNegativeButton("🗑 Sil") { _, _ ->
+                .setPositiveButton("🗑 Sil") { _, _ ->
                     fNotes.removeAt(pos); saveFNotes(); updateFList()
                 }
+                .setNegativeButton(L("cancel"), null)
                 .show()
         }
     }
@@ -772,12 +780,32 @@ class MainActivity : Activity() {
         layout.addView(btnRow)
         layout.addView(statusText)
         headerMine = header("📒 " + L("myNotes"), "Tümünü gör ›") { fullMine = !fullMine; applyLayout() }
+        mineTitle = headerMine.getChildAt(0) as TextView
         mineToggle = headerMine.getChildAt(1) as TextView
+        mineDelete = TextView(this).apply {
+            text = "🗑"; textSize = 13f; setTextColor(META)
+            setPadding(dp(10), 0, 0, 0)
+            setOnClickListener { confirmClearMine() }
+        }
+        headerMine.addView(mineDelete)
         layout.addView(headerMine, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         layout.addView(listMine, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
-        headerFriends = header("👥 " + L("frNotes"), "›") { Toast.makeText(this, "${fNotes.size} not", Toast.LENGTH_SHORT).show() }
+        headerFriends = header("👥 " + L("frNotes"), "Tümünü gör ›") { fullFr = !fullFr; applyLayout() }
+        frTitle = headerFriends.getChildAt(0) as TextView
+        frToggle = headerFriends.getChildAt(1) as TextView
+        frDelete = TextView(this).apply {
+            text = "🗑"; textSize = 13f; setTextColor(META)
+            setPadding(dp(10), 0, 0, 0)
+            setOnClickListener { confirmClearFriends() }
+        }
+        headerFriends.addView(frDelete)
         layout.addView(headerFriends, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         layout.addView(listFriends, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 0.6f))
+        friendsPanel = android.widget.ScrollView(this).apply {
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+        }
+        layout.addView(friendsPanel)
         layout.addView(adSlot)
         layout.addView(navRow)
         buildNav()
@@ -786,7 +814,8 @@ class MainActivity : Activity() {
 
         loadNotes()
         prefs.registerOnSharedPreferenceChangeListener(prefsListener)
-        adapter = NoteAdapter()
+        adapter = NoteAdapter(visibleNotes)
+        arcAdapter = NoteAdapter(storeArc)
         updateList()
         listMine.adapter = adapter
 
@@ -800,7 +829,12 @@ class MainActivity : Activity() {
         }
         updateFList()
         listFriends.adapter = fAdapter
-        listFriends.setOnItemClickListener { _, _, pos, _ -> friendDialog(pos) }
+        listFriends.setOnItemClickListener { _, _, pos, _ ->
+            if (tab == "store") {
+                val n = storeArc[pos]
+                if (n.optString("type") == "voice") playNote(n) else editDialog(n)
+            } else friendDialog(pos)
+        }
 
         searchInput.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
@@ -853,13 +887,13 @@ class MainActivity : Activity() {
         handleInviteIntent(intent)
     }
 
-    private inner class NoteAdapter : BaseAdapter() {
-        override fun getCount() = visibleNotes.size
-        override fun getItem(p: Int) = visibleNotes[p]
+    private inner class NoteAdapter(private val src: MutableList<JSONObject>) : BaseAdapter() {
+        override fun getCount() = src.size
+        override fun getItem(p: Int) = src[p]
         override fun getItemId(p: Int) = p.toLong()
 
         override fun getView(p: Int, cv: View?, parent: ViewGroup): View {
-            val n = visibleNotes[p]
+            val n = src[p]
             val isVoice = n.optString("type") == "voice"
             val src = if (isVoice) n.optString("transcript") else n.optString("text")
             val tags = Regex("#[\\p{L}0-9_]+").findAll(src).map { it.value }.toList()
@@ -925,22 +959,138 @@ class MainActivity : Activity() {
     private fun applyLayout() {
         val isHome = tab == "home"
         val isNotes = tab == "notes"
+        val isStore = tab == "store"
+        val isFriends = tab == "friends"
         inputCard.visibility = if (isHome) View.VISIBLE else View.GONE
         btnRow.visibility = if (isHome) View.VISIBLE else View.GONE
         statusText.visibility = if (isHome) View.VISIBLE else View.GONE
-        headerMine.visibility = if (isHome) View.GONE else View.VISIBLE
-        listMine.visibility = if (isHome) View.GONE else View.VISIBLE
-        val showFriends = isNotes && !fullMine
-        headerFriends.visibility = if (showFriends) View.VISIBLE else View.GONE
-        listFriends.visibility = if (showFriends) View.VISIBLE else View.GONE
+        val listsVis = if (isNotes || isStore) View.VISIBLE else View.GONE
+        headerMine.visibility = listsVis
+        listMine.visibility = listsVis
+        headerFriends.visibility = listsVis
+        listFriends.visibility = listsVis
+        friendsPanel.visibility = if (isFriends) View.VISIBLE else View.GONE
+        if (isNotes) {
+            mineTitle.text = "📒 " + L("myNotes")
+            mineToggle.text = if (fullMine) "Gizle ›" else "Tümünü gör ›"
+            mineDelete.visibility = View.VISIBLE
+            frTitle.text = "👥 " + L("frNotes")
+            frToggle.text = if (fullFr) "Gizle ›" else "Tümünü gör ›"
+            frDelete.visibility = View.VISIBLE
+            headerFriends.visibility = if (fullMine) View.GONE else View.VISIBLE
+            listFriends.visibility = if (fullMine) View.GONE else View.GONE.let { if (fullMine) View.GONE else View.VISIBLE }
+            headerMine.visibility = if (fullFr) View.GONE else View.VISIBLE
+            listMine.visibility = if (fullFr) View.GONE else View.VISIBLE
+            listFriends.adapter = fAdapter
+        } else if (isStore) {
+            mineTitle.text = "⭐ FAVORİLER"
+            mineToggle.text = ""
+            mineDelete.visibility = View.GONE
+            frTitle.text = "📦 ARŞİV"
+            frToggle.text = ""
+            frDelete.visibility = View.GONE
+            listFriends.adapter = arcAdapter
+        }
         val clp = inputCard.layoutParams as LinearLayout.LayoutParams
         if (isHome) { clp.height = 0; clp.weight = 1f } else { clp.height = LinearLayout.LayoutParams.WRAP_CONTENT; clp.weight = 0f }
         inputCard.layoutParams = clp
         val ilp = input.layoutParams as LinearLayout.LayoutParams
         if (isHome) { ilp.height = 0; ilp.weight = 1f } else { ilp.height = LinearLayout.LayoutParams.WRAP_CONTENT; ilp.weight = 0f }
         input.layoutParams = ilp
-        mineToggle.text = if (fullMine) "Gizle ›" else "Tümünü gör ›"
+        if (isFriends) buildFriendsPanel()
         updateList()
+    }
+
+    private fun confirmClearMine() {
+        AlertDialog.Builder(this).setTitle("🗑 " + L("myNotes"))
+            .setMessage(L("del") + "?")
+            .setPositiveButton("✅") { _, _ ->
+                notes.removeAll { !it.optBoolean("archived") }
+                persist()
+            }
+            .setNegativeButton(L("cancel"), null).show()
+    }
+
+    private fun confirmClearFriends() {
+        AlertDialog.Builder(this).setTitle("🗑 " + L("frNotes"))
+            .setMessage(L("del") + "?")
+            .setPositiveButton("✅") { _, _ ->
+                fNotes.clear(); saveFNotes(); updateFList()
+            }
+            .setNegativeButton(L("cancel"), null).show()
+    }
+
+    private fun buildFriendsPanel() {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(8), dp(16), 0)
+        }
+        if (myFriends.isEmpty()) {
+            box.addView(TextView(this).apply {
+                text = L("noFriends"); textSize = 14f; setTextColor(META)
+                gravity = android.view.Gravity.CENTER
+                setPadding(0, dp(40), 0, 0)
+            })
+        }
+        myFriends.forEach { (uid, fo) ->
+            val name = fo.optString("name")
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                background = roundBg(SURFACE, 16)
+                setPadding(dp(14), dp(12), dp(14), dp(12))
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8) }
+            }
+            row.addView(TextView(this).apply {
+                text = "👤 $name"; textSize = 14f; setTextColor(TXT)
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            row.addView(TextView(this).apply {
+                text = "📝"; textSize = 15f
+                setPadding(dp(8), dp(4), dp(8), dp(4))
+                setOnClickListener { composeToFriend(uid, name) }
+            })
+            row.setOnClickListener {
+                if (name in expandedFriends) expandedFriends.remove(name) else expandedFriends.add(name)
+                buildFriendsPanel()
+            }
+            box.addView(row)
+            if (name in expandedFriends) {
+                val theirs = fNotes.filter { it.optString("fromName") == name }
+                if (theirs.isEmpty()) {
+                    box.addView(TextView(this).apply {
+                        text = "• • •"; textSize = 12f; setTextColor(META)
+                        setPadding(dp(24), 0, 0, dp(8))
+                    })
+                }
+                theirs.forEach { n ->
+                    val idx = fNotes.indexOf(n)
+                    box.addView(TextView(this).apply {
+                        text = (if (n.optBoolean("pending")) "⏳ " else "") + n.optString("text")
+                        textSize = 13f; setTextColor(TXT)
+                        background = roundBg(SURFACE2, 12)
+                        setPadding(dp(14), dp(10), dp(14), dp(10))
+                        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(6); marginStart = dp(12) }
+                        setOnClickListener { friendDialog(idx) }
+                    })
+                }
+            }
+        }
+        friendsPanel.removeAllViews()
+        friendsPanel.addView(box)
+    }
+
+    private fun composeToFriend(uid: String, name: String) {
+        val et = EditText(this).apply { hint = L("hint"); setTextColor(TXT); minLines = 2 }
+        AlertDialog.Builder(this)
+            .setTitle("📤 $name")
+            .setView(et)
+            .setPositiveButton("📤") { _, _ ->
+                val t = et.text.toString().trim()
+                if (t.isNotEmpty()) doSend(uid, t, 0L, 0L)
+            }
+            .setNegativeButton(L("cancel"), null)
+            .show()
     }
 
     private fun buildNav() {
@@ -976,11 +1126,11 @@ class MainActivity : Activity() {
             }
         }
         navRow.addView(fab)
-        item("🗂", "Arşiv", "archive") {
-            tab = "archive"; applyLayout(); buildNav()
+        item("🗂", "Arşiv", "store") {
+            tab = "store"; applyLayout(); buildNav()
         }
-        item("⭐", "Favoriler", "fav") {
-            tab = "fav"; applyLayout(); buildNav()
+        item("👥", "Arkadaşlar", "friends") {
+            tab = "friends"; applyLayout(); buildNav()
         }
     }
 
@@ -1192,18 +1342,24 @@ class MainActivity : Activity() {
 
     private fun updateList() {
         visibleNotes.clear()
+        storeArc.clear()
         val q = query.trim().lowercase()
-        val src = when (tab) {
-            "archive" -> notes.filter { it.optBoolean("archived") }
-            "fav" -> notes.filter { it.optBoolean("pinned") && !it.optBoolean("archived") }
-            else -> notes.filter { !it.optBoolean("archived") }
+        if (tab == "store") {
+            visibleNotes.addAll(notes.filter { it.optBoolean("pinned") && !it.optBoolean("archived") }
+                .sortedWith(compareByDescending<JSONObject> { it.optLong("createdAt") })
+                .filter { q.isEmpty() || display(it).lowercase().contains(q) })
+            storeArc.addAll(notes.filter { it.optBoolean("archived") }
+                .sortedWith(compareByDescending<JSONObject> { it.optLong("createdAt") })
+                .filter { q.isEmpty() || display(it).lowercase().contains(q) })
+            if (::arcAdapter.isInitialized) arcAdapter.notifyDataSetChanged()
+        } else {
+            visibleNotes.addAll(notes.filter { !it.optBoolean("archived") }
+                .filter { q.isEmpty() || display(it).lowercase().contains(q) }
+                .sortedWith(compareByDescending<JSONObject> { it.optBoolean("pinned") }
+                    .thenByDescending { it.optLong("createdAt") }))
         }
-        val filtered = src.filter { q.isEmpty() || display(it).lowercase().contains(q) }
-        visibleNotes.addAll(filtered.sortedWith(
-            compareByDescending<JSONObject> { it.optBoolean("pinned") }
-                .thenByDescending { it.optLong("createdAt") }
-        ))
         if (::adapter.isInitialized) adapter.notifyDataSetChanged()
+        updateFList()
     }
 
     private fun persist() {
