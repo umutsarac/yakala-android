@@ -5,6 +5,7 @@ import android.app.Activity
 import android.app.AlarmManager
 import android.app.AlertDialog
 import android.app.DatePickerDialog
+import android.app.Dialog
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -70,6 +71,14 @@ class MainActivity : Activity() {
     private lateinit var adSlot: android.widget.FrameLayout
     private var favOnly = false
     private var tab = "home"
+    private var fullMine = false
+    private lateinit var inputCard: LinearLayout
+    private lateinit var btnRow: LinearLayout
+    private lateinit var listMine: ListView
+    private lateinit var listFriends: ListView
+    private lateinit var headerMine: LinearLayout
+    private lateinit var headerFriends: LinearLayout
+    private lateinit var mineToggle: TextView
 
     private var recorder: MediaRecorder? = null
     private var recognizer: SpeechRecognizer? = null
@@ -342,26 +351,32 @@ class MainActivity : Activity() {
     }
 
     private fun friendsDialog() {
-        val items = arrayOf(
-            "🪪 Kodum: $myCode (kopyala)",
-            "➕ Kod ile arkadaş bul",
-            "📨 Davet linki paylaş",
-            "👥 Arkadaşlarım (${myFriends.size})",
-            "🔗 Sunucu / isim değiştir"
-        )
-        AlertDialog.Builder(this).setTitle("👥 Arkadaşlar").setItems(items) { _, w ->
-            when (w) {
-                0 -> {
+        sheet("👥 " + L("friends")) { root ->
+            root.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                background = roundBg(SURFACE2, 14)
+                setPadding(dp(14), dp(12), dp(14), dp(12))
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8) }
+                addView(TextView(this@MainActivity).apply { text = "🪪 " + L("myCode") + ": $myCode"; textSize = 14f; setTextColor(TXT) })
+                addView(TextView(this@MainActivity).apply { text = "Arkadaşlarınla kodunu paylaş"; textSize = 11f; setTextColor(META); setPadding(0, dp(4), 0, 0) })
+                setOnClickListener {
                     (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager)
                         .setPrimaryClip(ClipData.newPlainText("code", myCode))
-                    Toast.makeText(this, "🪪 Kod kopyalandı: $myCode", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, L("copied") + ": $myCode", Toast.LENGTH_SHORT).show()
                 }
-                1 -> addFriendDialog()
-                2 -> shareInvite()
-                3 -> friendsListDialog()
-                4 -> setupServerDialog()
-            }
-        }.show()
+            })
+            root.addView(sheetRow("➕", L("addFriend")) { addFriendDialog() })
+            root.addView(sheetRow("🔗", L("share")) { shareInvite() })
+            root.addView(sheetRow("👥", L("myFriends") + " (${myFriends.size})", if (myFriends.isEmpty()) "•" else "›") { friendsListDialog() })
+            root.addView(sheetRow("✏️", L("server")) { setupServerDialog() })
+            root.addView(TextView(this).apply {
+                text = "⚡ " + "Davet et"; setTextColor(Color.WHITE); textSize = 14f
+                gravity = android.view.Gravity.CENTER
+                background = grad(intArrayOf(0xFF6a5af9.toInt(), 0xFF9a4df0.toInt()), 14)
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(44)).apply { topMargin = dp(4); bottomMargin = dp(8) }
+                setOnClickListener { shareInvite() }
+            })
+        }
     }
 
     private fun addFriendDialog() {
@@ -619,11 +634,6 @@ class MainActivity : Activity() {
             gravity = android.view.Gravity.CENTER_VERTICAL
             setPadding(dp(14), 0, dp(14), dp(6))
         }
-        val menuBtn = TextView(this).apply {
-            text = "☰"; textSize = 20f; setTextColor(TXT)
-            setPadding(dp(8), dp(6), dp(8), dp(6))
-            setOnClickListener { settingsDialog() }
-        }
         val brand = TextView(this).apply {
             text = "⚡ Y A K A L A"; textSize = 16f; setTextColor(TXT)
             paint.isFakeBoldText = true
@@ -637,7 +647,7 @@ class MainActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(dp(36), dp(36))
             setOnClickListener { prefs.edit().putBoolean("dark", !isDark).apply(); recreate() }
         }
-        topBar.addView(menuBtn); topBar.addView(brand); topBar.addView(themeBtn)
+        topBar.addView(brand); topBar.addView(themeBtn)
         val iconRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER
@@ -667,7 +677,7 @@ class MainActivity : Activity() {
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { setMargins(dp(16), 0, dp(16), dp(10)) }
         }
-        val inputCard = LinearLayout(this).apply {
+        inputCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = roundBg(SURFACE, 20)
             setPadding(dp(14), dp(12), dp(14), dp(12))
@@ -702,7 +712,7 @@ class MainActivity : Activity() {
         }
         inputCard.addView(input)
         inputCard.addView(chipRow)
-        val row = LinearLayout(this).apply {
+        btnRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(16), 0, dp(16), dp(12))
         }
@@ -717,7 +727,7 @@ class MainActivity : Activity() {
         val save = gBtn("＋ KAYDET", 0xFF6a5af9.toInt(), 0xFF9a4df0.toInt()) { }
         voiceBtn = gBtn(L("voice"), 0xFF0891b2.toInt(), 0xFF1d4ed8.toInt()) { }
         textBtn = gBtn(L("stt"), 0xFFf97316.toInt(), 0xFFec4899.toInt()) { }
-        row.addView(save); row.addView(voiceBtn); row.addView(textBtn)
+        btnRow.addView(save); btnRow.addView(voiceBtn); btnRow.addView(textBtn)
         statusText = TextView(this).apply {
             textSize = 13f; setTextColor(GREEN_SOFT)
             setPadding(dp(18), 0, dp(18), dp(4))
@@ -738,8 +748,8 @@ class MainActivity : Activity() {
             })
             return h
         }
-        val listMine = ListView(this).apply { divider = null; dividerHeight = dp(10) }
-        val listFriends = ListView(this).apply { divider = null; dividerHeight = dp(8) }
+        listMine = ListView(this).apply { divider = null; dividerHeight = dp(10) }
+        listFriends = ListView(this).apply { divider = null; dividerHeight = dp(8) }
         adSlot = android.widget.FrameLayout(this).apply {
             background = roundBg(SURFACE2, 12)
             layoutParams = LinearLayout.LayoutParams(
@@ -759,15 +769,19 @@ class MainActivity : Activity() {
         layout.addView(iconRow)
         layout.addView(searchInput)
         layout.addView(inputCard)
-        layout.addView(row)
+        layout.addView(btnRow)
         layout.addView(statusText)
-        layout.addView(header("📒 " + L("myNotes"), "Tümünü gör ›") { favOnly = false; query = ""; searchInput.setText(""); updateList(); buildNav() })
+        headerMine = header("📒 " + L("myNotes"), "Tümünü gör ›") { fullMine = !fullMine; applyLayout() }
+        mineToggle = headerMine.getChildAt(1) as TextView
+        layout.addView(headerMine, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         layout.addView(listMine, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
-        layout.addView(header("👥 " + L("frNotes"), "›") { Toast.makeText(this, "${fNotes.size} not", Toast.LENGTH_SHORT).show() })
+        headerFriends = header("👥 " + L("frNotes"), "›") { Toast.makeText(this, "${fNotes.size} not", Toast.LENGTH_SHORT).show() }
+        layout.addView(headerFriends, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         layout.addView(listFriends, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 0.6f))
         layout.addView(adSlot)
         layout.addView(navRow)
         buildNav()
+        applyLayout()
         setContentView(layout)
 
         loadNotes()
@@ -881,7 +895,8 @@ class MainActivity : Activity() {
             }
             card.addView(TextView(this@MainActivity).apply {
                 text = buildString {
-                    if (n.optBoolean("pinned")) append("📌 ")
+                    if (n.optBoolean("pinned")) append("⭐ ")
+                    if (n.optBoolean("archived")) append("📦 ")
                     if (n.optLong("reminderTime") > System.currentTimeMillis()) append("⏰ ")
                     if (isVoice && n.optLong("duration") > 0) append("🎤 ${fmtDur(n.optLong("duration"))}  ")
                     tags.forEach { append("$it  ") }
@@ -907,6 +922,18 @@ class MainActivity : Activity() {
         return SimpleDateFormat(if (sameDay) "HH:mm" else "d MMM HH:mm", Locale("tr")).format(Date(ts))
     }
 
+    private fun applyLayout() {
+        val showFriends = tab == "home" && !fullMine
+        headerFriends.visibility = if (showFriends) View.VISIBLE else View.GONE
+        listFriends.visibility = if (showFriends) View.VISIBLE else View.GONE
+        val showInput = tab == "home"
+        inputCard.visibility = if (showInput) View.VISIBLE else View.GONE
+        btnRow.visibility = if (showInput) View.VISIBLE else View.GONE
+        statusText.visibility = if (showInput) View.VISIBLE else View.GONE
+        mineToggle.text = if (fullMine) "Gizle ›" else "Tümünü gör ›"
+        updateList()
+    }
+
     private fun buildNav() {
         navRow.removeAllViews()
         fun item(icon: String, label: String, key: String, onClick: () -> Unit) {
@@ -923,13 +950,10 @@ class MainActivity : Activity() {
             navRow.addView(v)
         }
         item("🏠", "Ana Sayfa", "home") {
-            tab = "home"; favOnly = false; query = ""; searchInput.setText(""); updateList(); buildNav()
+            tab = "home"; fullMine = false; applyLayout(); buildNav()
         }
-        item("🔍", "Arama", "search") {
-            tab = "search"
-            searchInput.visibility = View.VISIBLE
-            searchInput.requestFocus()
-            buildNav()
+        item("📋", "Notlarım", "notes") {
+            tab = "notes"; applyLayout(); buildNav()
         }
         val fab = TextView(this).apply {
             text = "＋"; textSize = 22f; setTextColor(Color.WHITE)
@@ -943,38 +967,95 @@ class MainActivity : Activity() {
             }
         }
         navRow.addView(fab)
-        item("🗂", "Arşiv", "archive") { Toast.makeText(this, "Yakında", Toast.LENGTH_SHORT).show() }
+        item("🗂", "Arşiv", "archive") {
+            tab = "archive"; applyLayout(); buildNav()
+        }
         item("⭐", "Favoriler", "fav") {
-            tab = "fav"; favOnly = true; updateList(); buildNav()
+            tab = "fav"; applyLayout(); buildNav()
         }
     }
 
     private fun langDialog() {
-        val codes = Lang.LANGS
-        val names = codes.map { Lang.NAMES[it]!! }
-        AlertDialog.Builder(this).setTitle(L("lang")).setItems(names.toTypedArray()) { _, w ->
-            prefs.edit().putString("lang", codes[w]).apply()
-            recreate()
-        }.show()
+        val flags = mapOf("tr" to "🇹", "en" to "🇸", "ru" to "🇷🇺", "zh" to "🇨🇳")
+        val cur = prefs.getString("lang", "tr")
+        sheet(L("lang")) { root ->
+            Lang.LANGS.forEach { c ->
+                root.addView(sheetRow(flags[c] ?: "🌐", Lang.NAMES[c]!!, if (c == cur) "✓" else "") {
+                    prefs.edit().putString("lang", c).apply()
+                    recreate()
+                })
+            }
+        }
+    }
+
+    private fun roundTopBg(color: Int, rDp: Int) = GradientDrawable().apply {
+        val r = dp(rDp).toFloat()
+        cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
+        setColor(color)
+    }
+
+    private fun sheet(title: String, builder: (LinearLayout) -> Unit) {
+        val dlg = Dialog(this)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = roundTopBg(SURFACE, 24)
+            setPadding(dp(20), dp(10), dp(20), dp(16))
+        }
+        root.addView(View(this).apply {
+            background = roundBg(META, 2)
+            layoutParams = LinearLayout.LayoutParams(dp(40), dp(4)).apply {
+                gravity = android.view.Gravity.CENTER_HORIZONTAL
+                bottomMargin = dp(12)
+            }
+        })
+        root.addView(TextView(this).apply {
+            text = title; textSize = 18f; setTextColor(TXT)
+            paint.isFakeBoldText = true
+            setPadding(0, 0, 0, dp(12))
+        })
+        builder(root)
+        root.addView(TextView(this).apply {
+            text = "✕ " + L("cancel"); setTextColor(Color.WHITE); textSize = 14f
+            gravity = android.view.Gravity.CENTER
+            background = grad(intArrayOf(0xFF6a5af9.toInt(), 0xFF9a4df0.toInt()), 14)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(44)).apply { topMargin = dp(6) }
+            setOnClickListener { dlg.dismiss() }
+        })
+        val scroll = android.widget.ScrollView(this).apply { addView(root) }
+        dlg.setContentView(scroll)
+        dlg.window?.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            setGravity(android.view.Gravity.BOTTOM)
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+        dlg.show()
+    }
+
+    private fun sheetRow(icon: String, label: String, right: String = "›", onClick: () -> Unit): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = android.view.Gravity.CENTER_VERTICAL
+        background = roundBg(SURFACE2, 14)
+        setPadding(dp(14), dp(12), dp(14), dp(12))
+        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8) }
+        setOnClickListener { onClick() }
+        addView(TextView(this@MainActivity).apply { text = icon; textSize = 16f; setPadding(0, 0, dp(10), 0) })
+        addView(TextView(this@MainActivity).apply {
+            text = label; textSize = 14f; setTextColor(TXT)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        addView(TextView(this@MainActivity).apply { text = right; textSize = 13f; setTextColor(ACCENT) })
     }
 
     private fun settingsDialog() {
-        val items = arrayOf(
-            if (isDark) L("toLight") else L("toDark"),
-            if (prefs.getBoolean("shake", false)) L("shakeOn") else L("shakeOff"),
-            L("backup"),
-            L("restore"),
-            L("about")
-        )
-        AlertDialog.Builder(this).setTitle(L("settings")).setItems(items) { _, w ->
-            when (w) {
-                0 -> { prefs.edit().putBoolean("dark", !isDark).apply(); recreate() }
-                1 -> toggleShake()
-                2 -> exportNotes()
-                3 -> importNotes()
-                4 -> Toast.makeText(this, "⚡ Yakala v2.2 🔐", Toast.LENGTH_SHORT).show()
-            }
-        }.show()
+        sheet(L("settings")) { root ->
+            root.addView(sheetRow(if (isDark) "☀️" else "🌙", if (isDark) L("toLight") else L("toDark"), if (isDark) "AÇIK" else "KAPALI") {
+                prefs.edit().putBoolean("dark", !isDark).apply(); recreate()
+            })
+            root.addView(sheetRow("📳", L("shakeOn").substringAfter(" ").substringBefore(":"), if (prefs.getBoolean("shake", false)) "AÇIK" else "KAPALI") { toggleShake() })
+            root.addView(sheetRow("☁️", L("backup")) { exportNotes() })
+            root.addView(sheetRow("💾", L("restore")) { importNotes() })
+            root.addView(sheetRow("ℹ️", "Yakala v2.4", "•") { Toast.makeText(this, "⚡ Yakala v2.4 🔐", Toast.LENGTH_SHORT).show() })
+        }
     }
 
     private fun toggleShake() {
@@ -1103,7 +1184,12 @@ class MainActivity : Activity() {
     private fun updateList() {
         visibleNotes.clear()
         val q = query.trim().lowercase()
-        val filtered = notes.filter { (!favOnly || it.optBoolean("pinned")) && (q.isEmpty() || display(it).lowercase().contains(q)) }
+        val src = when (tab) {
+            "archive" -> notes.filter { it.optBoolean("archived") }
+            "fav" -> notes.filter { it.optBoolean("pinned") && !it.optBoolean("archived") }
+            else -> notes.filter { !it.optBoolean("archived") }
+        }
+        val filtered = src.filter { q.isEmpty() || display(it).lowercase().contains(q) }
         visibleNotes.addAll(filtered.sortedWith(
             compareByDescending<JSONObject> { it.optBoolean("pinned") }
                 .thenByDescending { it.optLong("createdAt") }
@@ -1146,7 +1232,8 @@ class MainActivity : Activity() {
         if (isVoice) items.add("🔊 Çal")
         items.add("📤 Arkadaşa gönder")
         items.add("⏰ Hatırlat")
-        items.add(if (pinned) "📌 Sabitlemeyi kaldır" else "📌 Sabitle")
+        items.add(if (pinned) "⭐ Favorilerden çıkar" else "⭐ Favorilere ekle")
+        items.add(if (n.optBoolean("archived")) "📦 Arşivden çıkar" else "📦 Arşive ekle")
         items.add("🗑️ Sil")
         AlertDialog.Builder(this).setTitle(display(n)).setItems(items.toTypedArray()) { _, which ->
             when (items[which]) {
@@ -1154,8 +1241,10 @@ class MainActivity : Activity() {
                 "🔊 Çal" -> playNote(n)
                 "📤 Arkadaşa gönder" -> sendToFriend(n.optString("text").ifBlank { n.optString("transcript") })
                 "⏰ Hatırlat" -> scheduleReminder(n)
-                "📌 Sabitle" -> { n.put("pinned", true); persist() }
-                "📌 Sabitlemeyi kaldır" -> { n.put("pinned", false); persist() }
+                "⭐ Favorilere ekle" -> { n.put("pinned", true); persist() }
+                "⭐ Favorilerden çıkar" -> { n.put("pinned", false); persist() }
+                "📦 Arşive ekle" -> { n.put("archived", true); persist() }
+                "📦 Arşivden çıkar" -> { n.put("archived", false); persist() }
                 "🗑️ Sil" -> deleteNote(n)
             }
         }.show()
