@@ -923,13 +923,22 @@ class MainActivity : Activity() {
     }
 
     private fun applyLayout() {
-        val showFriends = tab == "home" && !fullMine
+        val isHome = tab == "home"
+        val isNotes = tab == "notes"
+        inputCard.visibility = if (isHome) View.VISIBLE else View.GONE
+        btnRow.visibility = if (isHome) View.VISIBLE else View.GONE
+        statusText.visibility = if (isHome) View.VISIBLE else View.GONE
+        headerMine.visibility = if (isHome) View.GONE else View.VISIBLE
+        listMine.visibility = if (isHome) View.GONE else View.VISIBLE
+        val showFriends = isNotes && !fullMine
         headerFriends.visibility = if (showFriends) View.VISIBLE else View.GONE
         listFriends.visibility = if (showFriends) View.VISIBLE else View.GONE
-        val showInput = tab == "home"
-        inputCard.visibility = if (showInput) View.VISIBLE else View.GONE
-        btnRow.visibility = if (showInput) View.VISIBLE else View.GONE
-        statusText.visibility = if (showInput) View.VISIBLE else View.GONE
+        val clp = inputCard.layoutParams as LinearLayout.LayoutParams
+        if (isHome) { clp.height = 0; clp.weight = 1f } else { clp.height = LinearLayout.LayoutParams.WRAP_CONTENT; clp.weight = 0f }
+        inputCard.layoutParams = clp
+        val ilp = input.layoutParams as LinearLayout.LayoutParams
+        if (isHome) { ilp.height = 0; ilp.weight = 1f } else { ilp.height = LinearLayout.LayoutParams.WRAP_CONTENT; ilp.weight = 0f }
+        input.layoutParams = ilp
         mineToggle.text = if (fullMine) "Gizle ›" else "Tümünü gör ›"
         updateList()
     }
