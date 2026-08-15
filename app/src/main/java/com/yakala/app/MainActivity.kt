@@ -314,7 +314,7 @@ class MainActivity : Activity() {
             val p = if (n.optBoolean("pending")) "⏳ " else if (n.optLong("reminderAt") > 0) "🔔 " else ""
             "$p👤 ${n.optString("fromName")}: ${n.optString("text")}"
         })
-        fAdapter.notifyDataSetChanged()
+        if (::fAdapter.isInitialized) fAdapter.notifyDataSetChanged()
     }
 
     private fun friendDialog(pos: Int) {
@@ -1194,7 +1194,7 @@ class MainActivity : Activity() {
             compareByDescending<JSONObject> { it.optBoolean("pinned") }
                 .thenByDescending { it.optLong("createdAt") }
         ))
-        adapter.notifyDataSetChanged()
+        if (::adapter.isInitialized) adapter.notifyDataSetChanged()
     }
 
     private fun persist() {
