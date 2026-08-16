@@ -123,7 +123,7 @@ class MainActivity : Activity() {
     private fun vibrate(ms: Long = 150) {
         try {
             val v = getSystemService(VIBRATOR_SERVICE) as android.os.Vibrator
-            if (Build.VERSION.SDK_INT >= 26) v.vibrate(android.os.VibrationEffect.createOneShot(ms, 80))
+            if (Build.VERSION.SDK_INT >= 26) v.vibrate(android.os.VibrationEffect.createOneShot(300, 255))
             else @Suppress("DEPRECATION") v.vibrate(ms)
         } catch (_: Exception) {}
     }
@@ -1108,12 +1108,17 @@ class MainActivity : Activity() {
         return t
     }
 
+    private var lastTimeTok = ""
+
     private fun parseTimeFrom(lowIn: String): Long? {
         val low = normSayi(lowIn)
+        lastTimeTok = ""
         val m = Regex("saat\\s*(\\d{1,2})(?:[.:](\\d{2})|\\s+(\\d{1,2}))?").find(low)
             ?: Regex("(\\d{1,2})[.:](\\d{2})").find(low)
             ?: Regex("(\\d{1,2})\\s+(\\d{2})\\b").find(low)
+            ?: Regex("([01]\\d|2[0-3])([0-5]\\d)\\b").find(low)
         if (m != null) {
+            lastTimeTok = m.value
             val h = m.groupValues[1].toInt()
             val mi = m.groupValues.getOrNull(2)?.takeIf { it.isNotEmpty() }?.toInt()
                 ?: m.groupValues.getOrNull(3)?.takeIf { it.isNotEmpty() }?.toInt() ?: 0
