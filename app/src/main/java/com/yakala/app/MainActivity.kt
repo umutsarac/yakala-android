@@ -1150,7 +1150,7 @@ class MainActivity : Activity() {
         if (low.contains("alarm")) {
             val t = parseTimeFrom(low) ?: System.currentTimeMillis() + 3600_000
             val cal = Calendar.getInstance().apply { timeInMillis = t }
-            val msg = tr.replace(Regex("(?i)alarm(\\s+ekle|\\s+kur)?"), "").trim().ifEmpty { tr }
+            val msg = tr.replace(lastTimeTok, "", true).replace(Regex("(?i)alarm(\\s+ekle|\\s+kur)?"), "").trim().ifEmpty { "Yakala" }
             try {
                 val ai = Intent(AlarmClock.ACTION_SET_ALARM).apply {
                     putExtra(AlarmClock.EXTRA_HOUR, cal.get(Calendar.HOUR_OF_DAY))
@@ -1170,7 +1170,7 @@ class MainActivity : Activity() {
         }
         if (low.contains("hatırlat")) {
             val t = parseTimeFrom(low) ?: System.currentTimeMillis() + 3600_000
-            val msg = tr.replace(Regex("(?i)hatırlatıcı|hatirlatici|hatırlat(\\s+ekle|\\s+kur)?"), "").trim().ifEmpty { tr }
+            val msg = tr.replace(lastTimeTok, "", true).replace(Regex("(?i)hatırlatıcı|hatirlatici|hatırlat(\\s+ekle|\\s+kur)?"), "").trim().ifEmpty { "Yakala" }
             val o = JSONObject()
             o.put("id", System.currentTimeMillis()); o.put("type", "text")
             o.put("text", "⏰ " + msg); o.put("pinned", false); o.put("createdAt", System.currentTimeMillis())

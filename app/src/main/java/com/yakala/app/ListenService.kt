@@ -75,11 +75,11 @@ class ListenService : Service(), SensorEventListener {
         val x = e.values[0]; val y = e.values[1]; val z = e.values[2]
         val g = Math.sqrt((x * x + y * y + z * z).toDouble()) / SensorManager.GRAVITY_EARTH
         val now = System.currentTimeMillis()
-        if (g > 2.0 && lastG <= 2.0) {
+        if (g > 2.4 && lastG <= 2.4) {
             if (now - peaks.lastOrNull().orDefault(0) > 80) {
-                peaks.removeAll { now - it > 2500 }
+                peaks.removeAll { now - it > 2000 }
                 peaks.add(now)
-                if (peaks.size >= 4) {
+                if (peaks.size >= 5) {
                     peaks.clear()
                     if (listening) {
                         // dinleme sirasinda salla -> kaydi bitir ve KAYDET
@@ -234,7 +234,7 @@ class ListenService : Service(), SensorEventListener {
         if (low.contains("alarm")) {
             val t = parseTimeFrom(low) ?: System.currentTimeMillis() + 3600_000
             val cal = Calendar.getInstance().apply { timeInMillis = t }
-            val msg = tr.replace("alarm ekle", "", true).replace("alarm kur", "", true).replace("alarm", "", true).trim().ifEmpty { tr }
+            val msg = tr.replace(lastTimeTok, "", true).replace("alarm ekle", "", true).replace("alarm kur", "", true).replace("alarm", "", true).trim().ifEmpty { "Yakala" }
             val i = Intent(this, ReminderReceiver::class.java).apply {
                 putExtra("text", "⏰ " + msg); putExtra("id", msg.hashCode()); putExtra("alarm", true)
                 putExtra("hour", cal.get(Calendar.HOUR_OF_DAY)); putExtra("minute", cal.get(Calendar.MINUTE))
@@ -257,7 +257,7 @@ class ListenService : Service(), SensorEventListener {
         }
         if (low.contains("hatırlat")) {
             val t = parseTimeFrom(low) ?: System.currentTimeMillis() + 3600_000
-            val msg = tr.replace("hatırlatıcı ekle", "", true).replace("hatırlatıcı", "", true).replace("hatırlat", "", true).trim().ifEmpty { tr }
+            val msg = tr.replace(lastTimeTok, "", true).replace("hatırlatıcı ekle", "", true).replace("hatırlatıcı", "", true).replace("hatırlat", "", true).trim().ifEmpty { "Yakala" }
             val prefs = getSharedPreferences("yakala", MODE_PRIVATE)
             val o = JSONObject()
             o.put("id", System.currentTimeMillis()); o.put("type", "text")
