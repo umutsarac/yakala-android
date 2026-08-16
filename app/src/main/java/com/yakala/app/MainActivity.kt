@@ -120,6 +120,14 @@ class MainActivity : Activity() {
     private val REQ_IMPORT = 72
     private val WRAP = LinearLayout.LayoutParams.WRAP_CONTENT
 
+    private fun vibrate(ms: Long = 150) {
+        try {
+            val v = getSystemService(VIBRATOR_SERVICE) as android.os.Vibrator
+            if (Build.VERSION.SDK_INT >= 26) v.vibrate(android.os.VibrationEffect.createOneShot(ms, 80))
+            else @Suppress("DEPRECATION") v.vibrate(ms)
+        } catch (_: Exception) {}
+    }
+
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
     private fun roundBg(color: Int, radiusDp: Int = 14) =
         GradientDrawable().apply { cornerRadius = dp(radiusDp).toFloat(); setColor(color) }
@@ -1864,6 +1872,7 @@ class MainActivity : Activity() {
             override fun onEvent(p0: Int, p1: Bundle?) {}
         })
         recognizer!!.startListening(ri)
+        vibrate()
         mode = 2
         textBtn.text = L("stop")
         textBtn.background = grad(intArrayOf(0xFFdc2626.toInt(), 0xFFef4444.toInt()), 16)

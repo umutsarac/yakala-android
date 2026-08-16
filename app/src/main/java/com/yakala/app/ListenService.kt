@@ -99,6 +99,14 @@ class ListenService : Service(), SensorEventListener {
 
     override fun onAccuracyChanged(s: Sensor?, a: Int) {}
 
+    private fun vibrate(ms: Long = 150) {
+        try {
+            val v = getSystemService(VIBRATOR_SERVICE) as android.os.Vibrator
+            if (Build.VERSION.SDK_INT >= 26) v.vibrate(android.os.VibrationEffect.createOneShot(ms, 80))
+            else @Suppress("DEPRECATION") v.vibrate(ms)
+        } catch (_: Exception) {}
+    }
+
     private fun beep(times: Int) {
         Thread {
             try {
@@ -116,6 +124,7 @@ class ListenService : Service(), SensorEventListener {
     private fun startListening() {
         if (listening) return
         listening = true
+        vibrate()
         beep(1)
         nm.notify(43, notif(Lang.t(lang(), "listen")))
         val sb = StringBuilder()
