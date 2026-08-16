@@ -239,6 +239,19 @@ class ListenService : Service(), SensorEventListener {
                 putExtra("text", "⏰ " + msg); putExtra("id", msg.hashCode()); putExtra("alarm", true)
                 putExtra("hour", cal.get(Calendar.HOUR_OF_DAY)); putExtra("minute", cal.get(Calendar.MINUTE))
             }
+            try {
+                val ai = Intent(android.provider.AlarmClock.ACTION_SET_ALARM).apply {
+                    putExtra(android.provider.AlarmClock.EXTRA_HOUR, cal.get(Calendar.HOUR_OF_DAY))
+                    putExtra(android.provider.AlarmClock.EXTRA_MINUTES, cal.get(Calendar.MINUTE))
+                    putExtra(android.provider.AlarmClock.EXTRA_MESSAGE, msg)
+                    putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, true)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                if (packageManager.getLaunchIntentForPackage("com.google.android.deskclock") != null) {
+                    ai.setPackage("com.google.android.deskclock")
+                }
+                startActivity(ai)
+            } catch (_: Exception) {}
             sendBroadcast(i)
             return true
         }
