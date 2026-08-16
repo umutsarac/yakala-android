@@ -13,11 +13,13 @@ import android.hardware.SensorManager
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.Build
+import android.app.PendingIntent
 import android.os.IBinder
 import android.os.PowerManager
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import java.util.Calendar
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -167,7 +169,8 @@ class ListenService : Service(), SensorEventListener {
         recognizer = null
         val text = sb.toString().trim()
         if (text.isNotEmpty()) {
-            saveNote(text)
+            handleCommand(text)
+            saveNoteIfPlain(text)
             beep(2)
             nm.notify(43, notif("✅ " + text.take(50)))
         } else {
@@ -200,5 +203,106 @@ class ListenService : Service(), SensorEventListener {
         try { wakeLock?.release() } catch (_: Exception) {}
         try { recognizer?.destroy() } catch (_: Exception) {}
         super.onDestroy()
+    }
+
+    private var lastCmd = ""
+
+    private fun saveNoteIfPlain(text: String) {
+        if (handleCommandMatch(text)) return
+        saveNote(text)
+    }
+
+    private fun handleCommandMatch(text: String): Boolean {
+        val low = normSayi(text.lowercase())
+        return low.contains("alarm") || low.contains("hatırlat") ||
+            ((low.contains("gönder") || low.contains("yolla") || low.contains("ilet")) &&
+             getSharedPreferences("yakala", MODE_PRIVATE).getString("friendsCache", null) != null)
+    }
+
+    private fun handleCommand(tr: String): Boolean {
+        val low = normSayi(tr.lowercase())
+        if (low.contains("alarm")) {
+            val t = parseTimeFrom(low) ?: System.currentTimeMillis() + 3600_000
+            val cal = Calendar.getInstance().apply { timeInMillis = t }
+            val msg = tr.replace("alarm ekle", "", true).replace("alarm kur", "", true).replace("alarm", "", true).trim().ifEmpty { tr }
+            val i = Intent(this, ReminderReceiver::class.java).apply {
+                putExtra("text", "⏰ " + msg); putExtra("id", msg.hashCode()); putExtra("alarm", true)
+                putExtra("hour", cal.get(Calendar.HOUR_OF_DAY)); putExtra("minute", cal.get(Calendar.MINUTE))
+            }
+            sendBroadcast(i)
+            return true
+        }
+        if (low.contains("hatırlat")) {
+            val t = parseTimeFrom(low) ?: System.currentTimeMillis() + 3600_000
+            val msg = tr.replace("hatırlatıcı ekle", "", true).replace("hatırlatıcı", "", true).replace("hatırlat", "", true).trim().ifEmpty { tr }
+            val prefs = getSharedPreferences("yakala", MODE_PRIVATE)
+            val o = JSONObject()
+            o.put("id", System.currentTimeMillis()); o.put("type", "text")
+            o.put("text", "⏰ " + msg); o.put("pinned", false); o.put("createdAt", System.currentTimeMillis())
+            o.put("reminderTime", t)
+            val arr = JSONArray(); arr.put(o)
+            val raw = prefs.getString("notes", null)
+            if (raw != null) { try { val oa = JSONArray(raw); for (x in 0 until oa.length()) arr.put(oa.get(x)) } catch (_: Exception) {} }
+            prefs.edit().putString("notes", arr.toString()).apply()
+            val id = o.optLong("id").toInt()
+            val ri = Intent(this, ReminderReceiver::class.java).apply { putExtra("text", "⏰ " + msg); putExtra("id", id) }
+            val pi = PendingIntent.getBroadcast(this, id, ri, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            (getSystemService(ALARM_SERVICE) as AlarmManager).setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, t, pi)
+            return true
+        }
+        if (low.contains("gönder") || low.contains("yolla") || low.contains("ilet")) {
+            val prefs = getSharedPreferences("yakala", MODE_PRIVATE)
+            val cache = prefs.getString("friendsCache", null) ?: return false
+            val o = JSONObject(cache)
+            val keys = o.keys()
+            while (keys.hasNext()) {
+                val uid = keys.next()
+                val name = o.optString(uid)
+                if (name.length > 2 && low.contains(name.lowercase())) {
+                    var msg = tr.replace(name, "", true)
+                    msg = msg.replace("gönder", "", true).replace("yolla", "", true).replace("ilet", "", true).trim().trimStart('-', ':', ' ')
+                    if (msg.isEmpty()) msg = tr
+                    val si = Intent(this, SendReceiver::class.java).apply {
+                        putExtra("to", uid); putExtra("text", msg); putExtra("toName", name)
+                    }
+                    sendBroadcast(si)
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    private fun normSayi(t0: String): String {
+        var t = t0
+        val map = listOf("yirmi üç" to 23, "yirmi iki" to 22, "yirmi bir" to 21, "on dokuz" to 19, "on sekiz" to 18, "on yedi" to 17, "on altı" to 16, "on beş" to 15, "on dört" to 14, "on üç" to 13, "on iki" to 12, "on bir" to 11, "yirmi" to 20, "otuz" to 30, "kırk" to 40, "elli" to 50, "sıfır" to 0, "bir" to 1, "iki" to 2, "üç" to 3, "dört" to 4, "beş" to 5, "altı" to 6, "yedi" to 7, "sekiz" to 8, "dokuz" to 9, "on" to 10)
+        for ((w, n) in map) t = t.replace(w, n.toString())
+        return t
+    }
+
+    private fun parseTimeFrom(lowIn: String): Long? {
+        val low = normSayi(lowIn)
+        val m = Regex("saat\\s*(\\d{1,2})(?:[.:](\\d{2})|\\s+(\\d{1,2}))?").find(low)
+            ?: Regex("(\\d{1,2})[.:](\\d{2})").find(low)
+            ?: Regex("(\\d{1,2})\\s+(\\d{2})\\b").find(low)
+        if (m != null) {
+            val h = m.groupValues[1].toInt()
+            val mi = m.groupValues.getOrNull(2)?.takeIf { it.isNotEmpty() }?.toInt()
+                ?: m.groupValues.getOrNull(3)?.takeIf { it.isNotEmpty() }?.toInt() ?: 0
+            if (h in 0..23 && mi in 0..59) {
+                val cal = Calendar.getInstance().apply {
+                    set(Calendar.HOUR_OF_DAY, h); set(Calendar.MINUTE, mi)
+                    set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+                    if (low.contains("yarın")) add(Calendar.DAY_OF_YEAR, 1)
+                    else if (timeInMillis <= System.currentTimeMillis()) add(Calendar.DAY_OF_YEAR, 1)
+                }
+                return cal.timeInMillis
+            }
+        }
+        val mm = Regex("(\\d{1,2})\\s*(dakika|dk)").find(low)
+        if (mm != null) return System.currentTimeMillis() + mm.groupValues[1].toLong() * 60_000
+        val hh = Regex("(\\d{1,2})\\s*saat").find(low)
+        if (hh != null) return System.currentTimeMillis() + hh.groupValues[1].toLong() * 3_600_000
+        return null
     }
 }
