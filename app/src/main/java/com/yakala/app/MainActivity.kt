@@ -292,6 +292,7 @@ class MainActivity : Activity() {
             seenInbox.add(key)
             v.put("id", key)
             fNotes.add(0, v)
+            showReminderNotif(v)
             if (v.optBoolean("pending")) newPending = true
             val remAt = v.optLong("reminderAt")
             if (remAt > System.currentTimeMillis()) scheduleFriendReminder(v, remAt)
@@ -532,9 +533,12 @@ class MainActivity : Activity() {
 
     private fun askReminder(uid: String, text: String, deliveryAt: Long) {
         val tname = myFriends[uid]?.optString("name") ?: "Arkadaş"
-        AlertDialog.Builder(this).setTitle("🔔 $tname için hatırlatıcı eklensin mi?").setItems(arrayOf("🔔 Hatırlatıcı ekle", "➡️ Hatırlatıcısız gönder")) { _, r ->
-            if (r == 0) pickTime { remAt -> doSend(uid, text, deliveryAt, remAt) }
-            else doSend(uid, text, deliveryAt, 0L)
+        AlertDialog.Builder(this).setTitle("🔔 $tname için hatırlatıcı eklensin mi?").setItems(arrayOf("🔔 Hatırlatıcı ekle", "⏰ Alarm ekle", "➡️ Hatırlatıcısız gönder")) { _, r ->
+            when (r) {
+                0 -> pickTime { remAt -> doSend(uid, text, deliveryAt, remAt, "reminder") }
+                1 -> pickTime { remAt -> doSend(uid, text, deliveryAt, remAt, "alarm") }
+                else -> doSend(uid, text, deliveryAt, 0L)
+            }
         }.show()
     }
 
@@ -553,27 +557,35 @@ class MainActivity : Activity() {
         }, cal.get(Calendar.YEAR), cal.get(Calendar.MONTH), cal.get(Calendar.DAY_OF_MONTH)).show()
     }
 
-    private fun doSend(uid: String, text: String, deliveryAt: Long, reminderAt: Long) {
+    private fun doSend(uid: String, text: String, deliveryAt: Long, reminderAt: Long, remKind: String = "reminder") {
         val tname = myFriends[uid]?.optString("name") ?: "Arkadaş"
         if (deliveryAt <= 0L) {
-            postInbox(uid, text, "now", reminderAt)
+            postInbox(uid, text, "now", reminderAt, remKind)
             Toast.makeText(this, "📤 $tname'a gönderildi" + (if (reminderAt > 0) " + 🔔 ${fmtDate(reminderAt)}" else ""), Toast.LENGTH_SHORT).show()
         } else {
             val job = JSONObject().apply {
-                put("to", uid); put("text", text); put("at", deliveryAt); put("reminderAt", reminderAt)
+                put("to", uid); put("text", text); put("at", deliveryAt); put("reminderAt", reminderAt); put("remKind", remKind)
             }
             scheduledSends.add(job); saveScheduled()
+            val si = Intent(this, SendReceiver::class.java).apply {
+                putExtra("to", uid); putExtra("text", text)
+                putExtra("remAt", reminderAt); putExtra("remKind", remKind)
+            }
+            val spi = PendingIntent.getBroadcast(this, deliveryAt.toInt(), si,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            (getSystemService(ALARM_SERVICE) as AlarmManager)
+                .setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, deliveryAt, spi)
             Toast.makeText(this, "⏰ ${fmtDate(deliveryAt)}'de ulaşacak" + (if (reminderAt > 0) " + 🔔 ${fmtDate(reminderAt)}" else ""), Toast.LENGTH_LONG).show()
         }
     }
 
-    private fun postInbox(uid: String, text: String, kind: String, reminderAt: Long) {
+    private fun postInbox(uid: String, text: String, kind: String, reminderAt: Long, remKind: String = "reminder") {
         val pending = myGrants[uid] != "full"
         val o = JSONObject().apply {
             put("from", myCode); put("fromName", myName)
             put("text", text); put("time", System.currentTimeMillis())
             put("pending", pending); put("kind", kind)
-            if (reminderAt > 0) put("reminderAt", reminderAt)
+            if (reminderAt > 0) { put("reminderAt", reminderAt); put("reminderKind", remKind) }
         }
         Thread { conn("/users/$uid/inbox", "POST", o.toString()) }.start()
     }
@@ -876,7 +888,7 @@ class MainActivity : Activity() {
             val si = Intent(this, ListenService::class.java)
             if (Build.VERSION.SDK_INT >= 26) startForegroundService(si) else startService(si)
         }
-        loadScheduled(); handler.postDelayed(sendTicker, 15000)
+        loadScheduled()
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -999,6 +1011,58 @@ class MainActivity : Activity() {
         input.layoutParams = ilp
         if (isFriends) buildFriendsPanel()
         updateList()
+    }
+
+    private fun parseTimeFrom(low: String): Long? {
+        val m = Regex("saat\\s*(\\d{1,2})(?:[.:](\\d{2}))?").find(low) ?: return null
+        val h = m.groupValues[1].toInt()
+        val mi = if (m.groupValues[2].isEmpty()) 0 else m.groupValues[2].toInt()
+        val cal = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, h); set(Calendar.MINUTE, mi)
+            set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+            if (low.contains("yarın")) add(Calendar.DAY_OF_YEAR, 1)
+            else if (timeInMillis <= System.currentTimeMillis()) add(Calendar.DAY_OF_YEAR, 1)
+        }
+        return cal.timeInMillis
+    }
+
+    private fun processCommand(tr: String): Boolean {
+        val low = tr.lowercase()
+        for ((uid, fo) in myFriends) {
+            val name = fo.optString("name")
+            if (name.length > 2 && low.contains(name.lowercase()) && (low.contains("gönder") || low.contains("yolla") || low.contains("ilet"))) {
+                var msg = tr.replace(Regex(Regex.escape(name), RegexOption.IGNORE_CASE), "")
+                msg = msg.replace(Regex("(?i)(gönder|yolla|ilet|arkadaşa|arkadasa)"), "").trim().trimStart('-', ':', ' ')
+                if (msg.isEmpty()) msg = tr
+                doSend(uid, msg, 0L, 0L)
+                statusText.text = "📤 $name: $msg"
+                return true
+            }
+        }
+        if (low.contains("alarm")) {
+            val t = parseTimeFrom(low) ?: System.currentTimeMillis() + 3600_000
+            val msg = tr.replace(Regex("(?i)alarm(\\s+ekle|\\s+kur)?"), "").trim().ifEmpty { tr }
+            val i = Intent(this, ReminderReceiver::class.java).apply {
+                putExtra("text", "⏰ " + msg); putExtra("id", msg.hashCode()); putExtra("alarm", true)
+            }
+            val pi = PendingIntent.getBroadcast(this, msg.hashCode(), i,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            (getSystemService(ALARM_SERVICE) as AlarmManager).setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, t, pi)
+            statusText.text = "⏰ ALARM ${fmtDate(t)}: $msg"
+            return true
+        }
+        if (low.contains("hatırlat")) {
+            val t = parseTimeFrom(low) ?: System.currentTimeMillis() + 3600_000
+            val msg = tr.replace(Regex("(?i)hatırlatıcı|hatirlatici|hatırlat(\\s+ekle|\\s+kur)?"), "").trim().ifEmpty { tr }
+            val o = JSONObject()
+            o.put("id", System.currentTimeMillis()); o.put("type", "text")
+            o.put("text", "⏰ " + msg); o.put("pinned", false); o.put("createdAt", System.currentTimeMillis())
+            o.put("reminderTime", t)
+            notes.add(0, o); persist(); setAlarm(o)
+            statusText.text = "⏰ ${fmtDate(t)}: $msg"
+            return true
+        }
+        return false
     }
 
     private fun confirmClearMine() {
@@ -1498,6 +1562,7 @@ class MainActivity : Activity() {
         val i = Intent(this, ReminderReceiver::class.java).apply {
             putExtra("text", "🔔 " + v.optString("fromName") + ": " + v.optString("text"))
             putExtra("id", id)
+            putExtra("alarm", v.optString("reminderKind") == "alarm")
         }
         val pi = PendingIntent.getBroadcast(this, id, i,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -1632,7 +1697,9 @@ class MainActivity : Activity() {
         textBtn.text = L("stt")
         textBtn.background = grad(intArrayOf(0xFFf97316.toInt(), 0xFFec4899.toInt()), 16)
         val tr = transcript.toString().trim()
-        if (tr.isNotEmpty()) { addTextNote(tr); statusText.text = L("saved") }
+        if (tr.isNotEmpty()) {
+            if (!processCommand(tr)) { addTextNote(tr); statusText.text = L("saved") }
+        }
         else statusText.text = L("noSpeech")
     }
 

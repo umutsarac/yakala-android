@@ -1,28 +1,35 @@
 package com.yakala.app
 
 import android.app.Notification
+import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.media.RingtoneManager
 import android.os.Build
 
 class ReminderReceiver : BroadcastReceiver() {
-    override fun onReceive(context: Context, intent: Intent) {
-        val text = intent.getStringExtra("text") ?: "Hatırlatma"
-        val id = intent.getIntExtra("id", 0)
-        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val builder = if (Build.VERSION.SDK_INT >= 26) {
-            Notification.Builder(context, "yakala_rem")
-        } else {
-            @Suppress("DEPRECATION")
-            Notification.Builder(context)
+    override fun onReceive(c: Context, i: Intent) {
+        val text = i.getStringExtra("text") ?: return
+        val id = i.getIntExtra("id", 1)
+        val alarm = i.getBooleanExtra("alarm", false)
+        val nm = c.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= 26) {
+            val chId = if (alarm) "yakala_alarm" else "yakala_rem"
+            val ch = NotificationChannel(chId, if (alarm) "Alarmlar" else "Hatırlatmalar", NotificationManager.IMPORTANCE_HIGH)
+            if (alarm) ch.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM), null)
+            nm.createNotificationChannel(ch)
         }
-        builder.setSmallIcon(R.drawable.ic_yakala)
-            .setContentTitle("⏰ Yakala Hatırlatma")
+        val b = if (Build.VERSION.SDK_INT >= 26)
+            Notification.Builder(c, if (alarm) "yakala_alarm" else "yakala_rem")
+        else @Suppress("DEPRECATION") Notification.Builder(c)
+        b.setSmallIcon(R.drawable.ic_yakala)
+            .setContentTitle(if (alarm) "⏰ ALARM" else "⏰ Yakala")
             .setContentText(text)
             .setStyle(Notification.BigTextStyle().bigText(text))
             .setAutoCancel(true)
-        nm.notify(id, builder.build())
+        if (alarm) b.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM))
+        nm.notify(id, b.build())
     }
 }

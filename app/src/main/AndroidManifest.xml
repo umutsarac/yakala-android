@@ -45,5 +45,6 @@
                 android:resource="@xml/quick_widget_info" />
         </receiver>
         <receiver android:name=".ReminderReceiver" android:exported="false" />
+        <receiver android:name=".SendReceiver" android:exported="false" />
     </application>
 </manifest>
