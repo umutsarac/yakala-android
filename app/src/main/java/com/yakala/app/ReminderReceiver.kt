@@ -18,19 +18,28 @@ class ReminderReceiver : BroadcastReceiver() {
         val alarm = i.getBooleanExtra("alarm", false)
 
         if (i.getBooleanExtra("openClock", false)) {
+            val h = i.getIntExtra("hour", 8)
+            val mi = i.getIntExtra("minute", 0)
             try {
                 val ci = Intent(AlarmClock.ACTION_SET_ALARM).apply {
-                    putExtra(AlarmClock.EXTRA_HOUR, i.getIntExtra("hour", 8))
-                    putExtra(AlarmClock.EXTRA_MINUTES, i.getIntExtra("minute", 0))
+                    putExtra(AlarmClock.EXTRA_HOUR, h)
+                    putExtra(AlarmClock.EXTRA_MINUTES, mi)
                     putExtra(AlarmClock.EXTRA_MESSAGE, text)
                     putExtra(AlarmClock.EXTRA_SKIP_UI, true)
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
-                if (c.packageManager.getLaunchIntentForPackage("com.google.android.deskclock") != null) {
-                    ci.setPackage("com.google.android.deskclock")
-                }
                 c.startActivity(ci)
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                try {
+                    val ci2 = Intent(AlarmClock.ACTION_SET_ALARM).apply {
+                        putExtra(AlarmClock.EXTRA_HOUR, h)
+                        putExtra(AlarmClock.EXTRA_MINUTES, mi)
+                        putExtra(AlarmClock.EXTRA_MESSAGE, text)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    c.startActivity(ci2)
+                } catch (_: Exception) {}
+            }
             return
         }
 
