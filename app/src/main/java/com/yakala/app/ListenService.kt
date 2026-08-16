@@ -316,7 +316,7 @@ class ListenService : Service(), SensorEventListener {
                 var msg = tr.replace(lastTimeTok, "", true)
                 for (w in skip) msg = msg.replace(w, "", true)
                 for (tk in toks) { if (tk.length >= 3 && nl.contains(tk)) msg = msg.replace(tk, "", true) }
-                msg = msg.replace(Regex("\\s+"), " ").trim("-:;,. ".toCharArray())
+                msg = msg.replace(Regex("\\s+"), " ").trim { it in "-:;,. " }
                 if (msg.isEmpty()) msg = tr
                 val si = Intent(this, SendReceiver::class.java).apply {
                     putExtra("to", uid); putExtra("text", msg); putExtra("toName", name)
