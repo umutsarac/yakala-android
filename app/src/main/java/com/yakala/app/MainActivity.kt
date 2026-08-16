@@ -1158,6 +1158,9 @@ class MainActivity : Activity() {
                     putExtra(AlarmClock.EXTRA_MESSAGE, msg)
                     putExtra(AlarmClock.EXTRA_SKIP_UI, true)
                 }
+                if (packageManager.getLaunchIntentForPackage("com.google.android.deskclock") != null) {
+                    ai.setPackage("com.google.android.deskclock")
+                }
                 startActivity(ai)
                 statusText.text = "⏰ ${fmtDate(t)}: $msg"
             } catch (e: Exception) {

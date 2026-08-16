@@ -26,6 +26,9 @@ class ReminderReceiver : BroadcastReceiver() {
                     putExtra(AlarmClock.EXTRA_SKIP_UI, true)
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
+                if (c.packageManager.getLaunchIntentForPackage("com.google.android.deskclock") != null) {
+                    ci.setPackage("com.google.android.deskclock")
+                }
                 c.startActivity(ci)
             } catch (_: Exception) {}
             return
