@@ -139,7 +139,7 @@ class MainActivity : Activity() {
 
     private fun L(k: String) = Lang.t(prefs.getString("lang", "tr")!!, k)
 
-    private val serverUrl get() = prefs.getString("server", null) ?: DEFAULT_SERVER
+    private val serverUrl get() = DEFAULT_SERVER
     private val myUid get() = prefs.getString("uid", null)
     private val myCode: String get() {
         var c = prefs.getString("myCode", null)
@@ -484,27 +484,23 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(24), dp(16), dp(24), 0)
         }
-        val urlEt = EditText(this).apply {
-            hint = "Firebase URL"
-            setText(serverUrl)
-        }
         val nameEt = EditText(this).apply {
             hint = "Görünen adın"
             setText(if (myName.startsWith("Yakala-")) "" else myName)
         }
-        ll.addView(urlEt); ll.addView(nameEt)
+        ll.addView(nameEt)
         AlertDialog.Builder(this)
-            .setTitle("🔗 Sunucu / isim")
+            .setTitle("🪪 Görünen adın")
             .setView(ll)
             .setPositiveButton("Kaydet") { _, _ ->
                 prefs.edit()
-                    .putString("server", urlEt.text.toString().trim().trimEnd('/').let { if (it.contains("firebasedatabase.app") || it.contains("firebaseio.com")) it else DEFAULT_SERVER })
                     .putString("myName", nameEt.text.toString().trim().ifEmpty { "Yakala-$myCode" })
                     .putBoolean("codeReg", false)
                     .apply()
+                Thread { ensureIdentitySync() }.start()
                 Toast.makeText(this, "✅ Kaydedildi", Toast.LENGTH_SHORT).show()
             }
-            .setNegativeButton("Vazgeç", null)
+            .setNegativeButton(L("cancel"), null)
             .show()
     }
 
@@ -924,6 +920,10 @@ class MainActivity : Activity() {
             val si = Intent(this, ListenService::class.java)
             if (Build.VERSION.SDK_INT >= 26) startForegroundService(si) else startService(si)
         }
+        if (prefs.getBoolean("sync", false)) {
+            val si2 = Intent(this, SyncService::class.java)
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(si2) else startService(si2)
+        }
         loadScheduled()
     }
 
@@ -1050,16 +1050,26 @@ class MainActivity : Activity() {
     }
 
     private fun parseTimeFrom(low: String): Long? {
-        val m = Regex("saat\\s*(\\d{1,2})(?:[.:](\\d{2}))?").find(low) ?: return null
-        val h = m.groupValues[1].toInt()
-        val mi = if (m.groupValues[2].isEmpty()) 0 else m.groupValues[2].toInt()
-        val cal = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, h); set(Calendar.MINUTE, mi)
-            set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-            if (low.contains("yarın")) add(Calendar.DAY_OF_YEAR, 1)
-            else if (timeInMillis <= System.currentTimeMillis()) add(Calendar.DAY_OF_YEAR, 1)
+        var m = Regex("saat\\s*(\\d{1,2})(?:[.:](\\d{2}))?").find(low)
+        if (m == null) m = Regex("(\\d{1,2})[.:](\\d{2})").find(low)
+        if (m != null) {
+            val h = m.groupValues[1].toInt()
+            val mi = if (m.groupValues[2].isEmpty()) 0 else m.groupValues[2].toInt()
+            if (h in 0..23 && mi in 0..59) {
+                val cal = Calendar.getInstance().apply {
+                    set(Calendar.HOUR_OF_DAY, h); set(Calendar.MINUTE, mi)
+                    set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+                    if (low.contains("yarın")) add(Calendar.DAY_OF_YEAR, 1)
+                    else if (timeInMillis <= System.currentTimeMillis()) add(Calendar.DAY_OF_YEAR, 1)
+                }
+                return cal.timeInMillis
+            }
         }
-        return cal.timeInMillis
+        val mm = Regex("(\\d{1,2})\\s*(dakika|dk)").find(low)
+        if (mm != null) return System.currentTimeMillis() + mm.groupValues[1].toLong() * 60_000
+        val hh = Regex("(\\d{1,2})\\s*saat").find(low)
+        if (hh != null) return System.currentTimeMillis() + hh.groupValues[1].toLong() * 3_600_000
+        return null
     }
 
     private fun processCommand(tr: String): Boolean {
@@ -1256,7 +1266,7 @@ class MainActivity : Activity() {
     }
 
     private fun langDialog() {
-        val flags = mapOf("tr" to "🇹", "en" to "🇸", "ru" to "🇷🇺", "zh" to "🇨🇳")
+        val flags = mapOf("tr" to "🇹🇷", "en" to "🇺🇸", "ru" to "🇷🇺", "zh" to "🇨🇳")
         val cur = prefs.getString("lang", "tr")
         sheet(L("lang")) { root ->
             Lang.LANGS.forEach { c ->
@@ -1332,10 +1342,24 @@ class MainActivity : Activity() {
                 prefs.edit().putBoolean("dark", !isDark).apply(); recreate()
             })
             root.addView(sheetRow("📳", L("shakeOn").substringAfter(" ").substringBefore(":"), if (prefs.getBoolean("shake", false)) "AÇIK" else "KAPALI") { toggleShake() })
+            root.addView(sheetRow("🔄", "Arka plan eşitleme", if (prefs.getBoolean("sync", false)) "AÇIK" else "KAPALI") { toggleSync() })
             root.addView(sheetRow("☁️", L("backup")) { exportNotes() })
             root.addView(sheetRow("💾", L("restore")) { importNotes() })
             root.addView(sheetRow("ℹ️", "Yakala v2.4", "•") { Toast.makeText(this, "⚡ Yakala v2.4 🔐", Toast.LENGTH_SHORT).show() })
         }
+    }
+
+    private fun toggleSync() {
+        val on = prefs.getBoolean("sync", false)
+        if (on) {
+            stopService(Intent(this, SyncService::class.java))
+            prefs.edit().putBoolean("sync", false).apply()
+        } else {
+            prefs.edit().putBoolean("sync", true).apply()
+            val i = Intent(this, SyncService::class.java)
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(i) else startService(i)
+        }
+        settingsDialog()
     }
 
     private fun toggleShake() {
