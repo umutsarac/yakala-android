@@ -236,6 +236,7 @@ class ListenService : Service(), SensorEventListener {
 
     private fun handleCommand(tr: String): Boolean {
         val low = normSayi(tr.lowercase())
+        if (trySendFriend(tr, low)) return true
         if (low.contains("alarm")) {
             val t = parseTimeFrom(low) ?: System.currentTimeMillis() + 3600_000
             val cal = Calendar.getInstance().apply { timeInMillis = t }
@@ -293,24 +294,36 @@ class ListenService : Service(), SensorEventListener {
             (getSystemService(ALARM_SERVICE) as AlarmManager).setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, t, pi)
             return true
         }
-        if (low.contains("gönder") || low.contains("yolla") || low.contains("ilet")) {
-            val prefs = getSharedPreferences("yakala", MODE_PRIVATE)
-            val cache = prefs.getString("friendsCache", null) ?: return false
-            val o = JSONObject(cache)
-            val keys = o.keys()
-            while (keys.hasNext()) {
-                val uid = keys.next()
-                val name = o.optString(uid)
-                if (name.length > 2 && low.contains(name.lowercase())) {
-                    var msg = tr.replace(name, "", true)
-                    msg = msg.replace("gönder", "", true).replace("yolla", "", true).replace("ilet", "", true).trim().trimStart('-', ':', ' ')
-                    if (msg.isEmpty()) msg = tr
-                    val si = Intent(this, SendReceiver::class.java).apply {
-                        putExtra("to", uid); putExtra("text", msg); putExtra("toName", name)
-                    }
-                    sendBroadcast(si)
-                    return true
+        return false
+    }
+
+    private fun trySendFriend(tr: String, low: String): Boolean {
+        if (!(low.contains("gönder") || low.contains("yolla") || low.contains("ilet"))) return false
+        val prefs = getSharedPreferences("yakala", MODE_PRIVATE)
+        val cache = prefs.getString("friendsCache", null) ?: return false
+        val o = JSONObject(cache)
+        val toks = low.split(Regex("\\s+"))
+        val skip = setOf("gönder","yolla","ilet","arkadaşıma","arkadasima","arkadaşa","arkadasa","alarm","hatırlatıcı","hatirlatici","hatırlat","ekle","kur","saat","benim","icin","için")
+        val keys = o.keys()
+        while (keys.hasNext()) {
+            val uid = keys.next()
+            val name = o.optString(uid)
+            val nl = name.lowercase()
+            val hit = toks.any { it.length >= 3 && it !in skip && nl.contains(it) }
+            if (hit || (name.length > 2 && low.contains(nl))) {
+                val kind = if (low.contains("alarm")) "alarm" else if (low.contains("hatırlat")) "reminder" else null
+                val t = if (kind != null) parseTimeFrom(low) ?: System.currentTimeMillis() + 3600_000 else 0L
+                var msg = tr.replace(lastTimeTok, "", true)
+                for (w in skip) msg = msg.replace(w, "", true)
+                for (tk in toks) { if (tk.length >= 3 && nl.contains(tk)) msg = msg.replace(tk, "", true) }
+                msg = msg.replace(Regex("\\s+"), " ").trim("-:;,. ".toCharArray())
+                if (msg.isEmpty()) msg = tr
+                val si = Intent(this, SendReceiver::class.java).apply {
+                    putExtra("to", uid); putExtra("text", msg); putExtra("toName", name)
+                    if (t > 0) { putExtra("remAt", t); putExtra("remKind", kind) }
                 }
+                sendBroadcast(si)
+                return true
             }
         }
         return false

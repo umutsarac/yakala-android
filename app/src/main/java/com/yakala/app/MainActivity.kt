@@ -1114,6 +1114,31 @@ class MainActivity : Activity() {
 
     private var lastTimeTok = ""
 
+    private fun trySendFriend(tr: String, low: String): Boolean {
+        if (!(low.contains("gönder") || low.contains("yolla") || low.contains("ilet"))) return false
+        val toks = low.split(Regex("\\s+"))
+        val skip = setOf("gönder","yolla","ilet","arkadaşıma","arkadasima","arkadaşa","arkadasa","alarm","hatırlatıcı","hatirlatici","hatırlat","ekle","kur","saat","benim","icin","için")
+        for ((uid, fo) in myFriends) {
+            val name = fo.optString("name")
+            val nl = name.lowercase()
+            if (name.length < 2) continue
+            val hit = toks.any { it.length >= 3 && it !in skip && nl.contains(it) }
+            if (hit || (name.length > 2 && low.contains(nl))) {
+                val kind = if (low.contains("alarm")) "alarm" else if (low.contains("hatırlat")) "reminder" else null
+                val t = if (kind != null) parseTimeFrom(low) ?: System.currentTimeMillis() + 3600_000 else 0L
+                var msg = tr.replace(lastTimeTok, "", true)
+                for (w in skip) msg = msg.replace(w, "", true)
+                for (tk in toks) { if (tk.length >= 3 && nl.contains(tk)) msg = msg.replace(tk, "", true) }
+                msg = msg.replace(Regex("\\s+"), " ").trim("-:;,. ".toCharArray())
+                if (msg.isEmpty()) msg = tr
+                doSend(uid, msg, 0L, t, kind ?: "reminder")
+                statusText.text = "📤 $name: $msg" + (if (t > 0) (if (kind == "alarm") " ⏰" else " 🔔") else "")
+                return true
+            }
+        }
+        return false
+    }
+
     private fun parseTimeFrom(lowIn: String): Long? {
         val low = normSayi(lowIn)
         lastTimeTok = ""
@@ -1145,17 +1170,7 @@ class MainActivity : Activity() {
 
     private fun processCommand(tr: String): Boolean {
         val low = tr.lowercase()
-        for ((uid, fo) in myFriends) {
-            val name = fo.optString("name")
-            if (name.length > 2 && low.contains(name.lowercase()) && (low.contains("gönder") || low.contains("yolla") || low.contains("ilet"))) {
-                var msg = tr.replace(Regex(Regex.escape(name), RegexOption.IGNORE_CASE), "")
-                msg = msg.replace(Regex("(?i)(gönder|yolla|ilet|arkadaşa|arkadasa)"), "").trim().trimStart('-', ':', ' ')
-                if (msg.isEmpty()) msg = tr
-                doSend(uid, msg, 0L, 0L)
-                statusText.text = "📤 $name: $msg"
-                return true
-            }
-        }
+        if (trySendFriend(tr, low)) return true
         if (low.contains("alarm")) {
             val t = parseTimeFrom(low) ?: System.currentTimeMillis() + 3600_000
             val cal = Calendar.getInstance().apply { timeInMillis = t }
