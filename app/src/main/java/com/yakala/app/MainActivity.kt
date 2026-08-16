@@ -23,6 +23,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.provider.AlarmClock
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -856,7 +857,7 @@ class MainActivity : Activity() {
             setOnClickListener { exitSelect() }
         })
         layout.addView(selectBar)
-        headerMine = header("📒 " + L("myNotes"), "Tümünü gör ›") { fullMine = !fullMine; applyLayout() }
+        headerMine = header(L("myNotes"), "Tümünü gör ›") { fullMine = !fullMine; applyLayout() }
         mineTitle = headerMine.getChildAt(0) as TextView
         mineToggle = headerMine.getChildAt(1) as TextView
         mineDelete = TextView(this).apply {
@@ -867,7 +868,7 @@ class MainActivity : Activity() {
         headerMine.addView(mineDelete)
         layout.addView(headerMine, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         layout.addView(listMine, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
-        headerFriends = header("👥 " + L("frNotes"), "Tümünü gör ›") { fullFr = !fullFr; applyLayout() }
+        headerFriends = header(L("frNotes"), "Tümünü gör ›") { fullFr = !fullFr; applyLayout() }
         frTitle = headerFriends.getChildAt(0) as TextView
         frToggle = headerFriends.getChildAt(1) as TextView
         frDelete = TextView(this).apply {
@@ -1057,10 +1058,10 @@ class MainActivity : Activity() {
         listFriends.visibility = listsVis
         friendsPanel.visibility = if (isFriends) View.VISIBLE else View.GONE
         if (isNotes) {
-            mineTitle.text = "📒 " + L("myNotes")
+            mineTitle.text = L("myNotes")
             mineToggle.text = if (fullMine) "Gizle ›" else "Tümünü gör ›"
             mineDelete.visibility = View.VISIBLE
-            frTitle.text = "👥 " + L("frNotes")
+            frTitle.text = L("frNotes")
             frToggle.text = if (fullFr) "Gizle ›" else "Tümünü gör ›"
             frDelete.visibility = View.VISIBLE
             headerFriends.visibility = if (fullMine) View.GONE else View.VISIBLE
@@ -1140,14 +1141,20 @@ class MainActivity : Activity() {
         }
         if (low.contains("alarm")) {
             val t = parseTimeFrom(low) ?: System.currentTimeMillis() + 3600_000
+            val cal = Calendar.getInstance().apply { timeInMillis = t }
             val msg = tr.replace(Regex("(?i)alarm(\\s+ekle|\\s+kur)?"), "").trim().ifEmpty { tr }
-            val i = Intent(this, ReminderReceiver::class.java).apply {
-                putExtra("text", "⏰ " + msg); putExtra("id", msg.hashCode()); putExtra("alarm", true)
+            try {
+                val ai = Intent(AlarmClock.ACTION_SET_ALARM).apply {
+                    putExtra(AlarmClock.EXTRA_HOUR, cal.get(Calendar.HOUR_OF_DAY))
+                    putExtra(AlarmClock.EXTRA_MINUTES, cal.get(Calendar.MINUTE))
+                    putExtra(AlarmClock.EXTRA_MESSAGE, msg)
+                    putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+                }
+                startActivity(ai)
+                statusText.text = "⏰ ${fmtDate(t)}: $msg"
+            } catch (e: Exception) {
+                Toast.makeText(this, "Saat uygulaması bulunamadı", Toast.LENGTH_LONG).show()
             }
-            val pi = PendingIntent.getBroadcast(this, msg.hashCode(), i,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-            (getSystemService(ALARM_SERVICE) as AlarmManager).setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, t, pi)
-            statusText.text = "⏰ ALARM ${fmtDate(t)}: $msg"
             return true
         }
         if (low.contains("hatırlat")) {
@@ -1728,10 +1735,13 @@ class MainActivity : Activity() {
 
     private fun scheduleFriendReminder(v: JSONObject, at: Long) {
         val id = v.optString("id").hashCode()
+        val cal = Calendar.getInstance().apply { timeInMillis = at }
         val i = Intent(this, ReminderReceiver::class.java).apply {
             putExtra("text", "🔔 " + v.optString("fromName") + ": " + v.optString("text"))
             putExtra("id", id)
             putExtra("alarm", v.optString("reminderKind") == "alarm")
+            putExtra("hour", cal.get(Calendar.HOUR_OF_DAY))
+            putExtra("minute", cal.get(Calendar.MINUTE))
         }
         val pi = PendingIntent.getBroadcast(this, id, i,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)

@@ -115,10 +115,13 @@ class SyncService : Service() {
 
     private fun scheduleRem(v: JSONObject, at: Long) {
         val id = v.optString("id").hashCode()
+        val cal = java.util.Calendar.getInstance().apply { timeInMillis = at }
         val i = Intent(this, ReminderReceiver::class.java).apply {
             putExtra("text", "🔔 " + v.optString("fromName") + ": " + v.optString("text"))
             putExtra("id", id)
             putExtra("alarm", v.optString("reminderKind") == "alarm")
+            putExtra("hour", cal.get(java.util.Calendar.HOUR_OF_DAY))
+            putExtra("minute", cal.get(java.util.Calendar.MINUTE))
         }
         val pi = PendingIntent.getBroadcast(this, id, i, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         (getSystemService(ALARM_SERVICE) as AlarmManager).setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
