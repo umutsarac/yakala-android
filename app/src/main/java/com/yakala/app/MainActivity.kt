@@ -1557,6 +1557,20 @@ class MainActivity : Activity() {
         (getSystemService(ALARM_SERVICE) as AlarmManager).cancel(pi)
     }
 
+    private fun showReminderNotif(v: JSONObject) {
+        val id = v.optString("id").hashCode() + 1000
+        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        val b = if (Build.VERSION.SDK_INT >= 26)
+            android.app.Notification.Builder(this, "yakala_rem")
+        else @Suppress("DEPRECATION") android.app.Notification.Builder(this)
+        b.setSmallIcon(R.drawable.ic_yakala)
+            .setContentTitle("📬 " + v.optString("fromName"))
+            .setContentText(v.optString("text"))
+            .setStyle(android.app.Notification.BigTextStyle().bigText(v.optString("text")))
+            .setAutoCancel(true)
+        nm.notify(id, b.build())
+    }
+
     private fun scheduleFriendReminder(v: JSONObject, at: Long) {
         val id = v.optString("id").hashCode()
         val i = Intent(this, ReminderReceiver::class.java).apply {
