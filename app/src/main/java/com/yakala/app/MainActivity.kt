@@ -89,6 +89,10 @@ class MainActivity : Activity() {
     private val storeArc = mutableListOf<JSONObject>()
     private lateinit var arcAdapter: NoteAdapter
     private val expandedFriends = mutableSetOf<String>()
+    private var selectMode = false
+    private val selected = mutableSetOf<Long>()
+    private lateinit var selectBar: LinearLayout
+    private lateinit var selCountTv: TextView
     private var fullFr = false
 
     private var recorder: MediaRecorder? = null
@@ -393,7 +397,7 @@ class MainActivity : Activity() {
                 background = roundBg(SURFACE2, 14)
                 setPadding(dp(14), dp(12), dp(14), dp(12))
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8) }
-                addView(TextView(this@MainActivity).apply { text = "🪪 " + L("myCode") + ": $myCode"; textSize = 14f; setTextColor(TXT) })
+                addView(TextView(this@MainActivity).apply { text = L("myCode") + ": $myCode"; textSize = 14f; setTextColor(TXT) })
                 addView(TextView(this@MainActivity).apply { text = "Arkadaşlarınla kodunu paylaş"; textSize = 11f; setTextColor(META); setPadding(0, dp(4), 0, 0) })
                 setOnClickListener {
                     (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager)
@@ -822,6 +826,36 @@ class MainActivity : Activity() {
         layout.addView(inputCard)
         layout.addView(btnRow)
         layout.addView(statusText)
+        selectBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(dp(16), dp(6), dp(16), dp(6))
+            visibility = View.GONE
+        }
+        selCountTv = TextView(this).apply {
+            textSize = 13f; setTextColor(TXT)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        selectBar.addView(selCountTv)
+        selectBar.addView(TextView(this).apply {
+            text = "🗑 Sil"; setTextColor(Color.WHITE); textSize = 13f
+            gravity = android.view.Gravity.CENTER
+            background = grad(intArrayOf(0xFFdc2626.toInt(), 0xFFef4444.toInt()), 12)
+            layoutParams = LinearLayout.LayoutParams(WRAP, dp(36)).apply { marginEnd = dp(8) }
+            setOnClickListener {
+                notes.removeAll { it.optLong("id") in selected }
+                persist()
+                exitSelect()
+            }
+        })
+        selectBar.addView(TextView(this).apply {
+            text = "✕"; setTextColor(TXT); textSize = 14f
+            gravity = android.view.Gravity.CENTER
+            background = roundBg(SURFACE2, 12)
+            layoutParams = LinearLayout.LayoutParams(dp(36), dp(36))
+            setOnClickListener { exitSelect() }
+        })
+        layout.addView(selectBar)
         headerMine = header("📒 " + L("myNotes"), "Tümünü gör ›") { fullMine = !fullMine; applyLayout() }
         mineTitle = headerMine.getChildAt(0) as TextView
         mineToggle = headerMine.getChildAt(1) as TextView
@@ -906,9 +940,13 @@ class MainActivity : Activity() {
         }
         listMine.setOnItemClickListener { _, _, pos, _ ->
             val n = visibleNotes[pos]
-            if (n.optString("type") == "voice") playNote(n) else editDialog(n)
+            if (selectMode) toggleSelect(n)
+            else if (n.optString("type") == "voice") playNote(n) else editDialog(n)
         }
-        listMine.setOnItemLongClickListener { _, _, pos, _ -> optionsDialog(pos); true }
+        listMine.setOnItemLongClickListener { _, _, pos, _ ->
+            if (selectMode) { toggleSelect(visibleNotes[pos]); true }
+            else { optionsDialog(pos); true }
+        }
 
         handleIncomingIntent(intent)
         handleQuick(intent)
@@ -961,7 +999,7 @@ class MainActivity : Activity() {
             val lines = src.split("\n", limit = 2)
             if (!isVoice && lines.size == 2 && lines[0].isNotBlank()) {
                 card.addView(TextView(this@MainActivity).apply {
-                    text = lines[0]; setTextColor(TXT); textSize = 16f; paint.isFakeBoldText = true
+                    text = (if (selectMode) (if (n.optLong("id") in selected) "✅ " else "⬜ ") else "") + lines[0]; setTextColor(TXT); textSize = 16f; paint.isFakeBoldText = true
                 })
                 card.addView(TextView(this@MainActivity).apply {
                     text = lines[1]; setTextColor(META); textSize = 14f
@@ -970,7 +1008,7 @@ class MainActivity : Activity() {
                 })
             } else {
                 card.addView(TextView(this@MainActivity).apply {
-                    text = (if (isVoice) "🎤 " else "") + src.ifBlank { "Sesli not" }
+                    text = (if (selectMode) (if (n.optLong("id") in selected) "✅ " else "⬜ ") else "") + (if (isVoice) "🎤 " else "") + src.ifBlank { "Sesli not" }
                     setTextColor(TXT); textSize = 15f
                     maxLines = 3; ellipsize = android.text.TextUtils.TruncateAt.END
                 })
@@ -1049,12 +1087,27 @@ class MainActivity : Activity() {
         updateList()
     }
 
-    private fun parseTimeFrom(low: String): Long? {
-        var m = Regex("saat\\s*(\\d{1,2})(?:[.:](\\d{2}))?").find(low)
-        if (m == null) m = Regex("(\\d{1,2})[.:](\\d{2})").find(low)
+    private fun normSayi(t0: String): String {
+        var t = t0
+        val map = listOf("yirmi üç" to 23, "yirmi iki" to 22, "yirmi bir" to 21,
+            "on dokuz" to 19, "on sekiz" to 18, "on yedi" to 17, "on altı" to 16,
+            "on beş" to 15, "on dört" to 14, "on üç" to 13, "on iki" to 12, "on bir" to 11,
+            "yirmi" to 20, "otuz" to 30, "kırk" to 40, "elli" to 50,
+            "sıfır" to 0, "bir" to 1, "iki" to 2, "üç" to 3, "dört" to 4,
+            "beş" to 5, "altı" to 6, "yedi" to 7, "sekiz" to 8, "dokuz" to 9, "on" to 10)
+        for ((w, n) in map) t = t.replace(w, n.toString())
+        return t
+    }
+
+    private fun parseTimeFrom(lowIn: String): Long? {
+        val low = normSayi(lowIn)
+        val m = Regex("saat\\s*(\\d{1,2})(?:[.:](\\d{2})|\\s+(\\d{1,2}))?").find(low)
+            ?: Regex("(\\d{1,2})[.:](\\d{2})").find(low)
+            ?: Regex("(\\d{1,2})\\s+(\\d{2})\\b").find(low)
         if (m != null) {
             val h = m.groupValues[1].toInt()
-            val mi = if (m.groupValues[2].isEmpty()) 0 else m.groupValues[2].toInt()
+            val mi = m.groupValues.getOrNull(2)?.takeIf { it.isNotEmpty() }?.toInt()
+                ?: m.groupValues.getOrNull(3)?.takeIf { it.isNotEmpty() }?.toInt() ?: 0
             if (h in 0..23 && mi in 0..59) {
                 val cal = Calendar.getInstance().apply {
                     set(Calendar.HOUR_OF_DAY, h); set(Calendar.MINUTE, mi)
@@ -1328,7 +1381,10 @@ class MainActivity : Activity() {
         setPadding(dp(14), dp(12), dp(14), dp(12))
         layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8) }
         setOnClickListener { onClick() }
-        addView(TextView(this@MainActivity).apply { text = icon; textSize = 16f; setPadding(0, 0, dp(10), 0) })
+        val firstCh = label.firstOrNull() ?: ' '
+        if (firstCh.isLetterOrDigit()) {
+            addView(TextView(this@MainActivity).apply { text = icon; textSize = 16f; setPadding(0, 0, dp(10), 0) })
+        }
         addView(TextView(this@MainActivity).apply {
             text = label; textSize = 14f; setTextColor(TXT)
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
@@ -1360,6 +1416,25 @@ class MainActivity : Activity() {
             if (Build.VERSION.SDK_INT >= 26) startForegroundService(i) else startService(i)
         }
         settingsDialog()
+    }
+
+    private fun toggleSelect(n: JSONObject) {
+        val id = n.optLong("id")
+        if (id in selected) selected.remove(id) else selected.add(id)
+        if (selected.isEmpty()) exitSelect() else { selCountTv.text = "${selected.size}"; adapter.notifyDataSetChanged() }
+    }
+
+    private fun enterSelect(id: Long) {
+        selectMode = true; selected.clear(); selected.add(id)
+        selectBar.visibility = View.VISIBLE
+        selCountTv.text = "1"
+        adapter.notifyDataSetChanged()
+    }
+
+    private fun exitSelect() {
+        selectMode = false; selected.clear()
+        selectBar.visibility = View.GONE
+        adapter.notifyDataSetChanged()
     }
 
     private fun toggleShake() {
@@ -1544,6 +1619,7 @@ class MainActivity : Activity() {
         items.add("⏰ Hatırlat")
         items.add(if (pinned) "⭐ Favorilerden çıkar" else "⭐ Favorilere ekle")
         items.add(if (n.optBoolean("archived")) "📦 Arşivden çıkar" else "📦 Arşive ekle")
+        items.add("☑️ Çoklu sil")
         items.add("🗑️ Sil")
         AlertDialog.Builder(this).setTitle(display(n)).setItems(items.toTypedArray()) { _, which ->
             when (items[which]) {
@@ -1555,6 +1631,7 @@ class MainActivity : Activity() {
                 "⭐ Favorilerden çıkar" -> { n.put("pinned", false); persist() }
                 "📦 Arşive ekle" -> { n.put("archived", true); persist() }
                 "📦 Arşivden çıkar" -> { n.put("archived", false); persist() }
+                "☑️ Çoklu sil" -> enterSelect(n.optLong("id"))
                 "🗑️ Sil" -> deleteNote(n)
             }
         }.show()
