@@ -13,6 +13,7 @@ import android.hardware.SensorManager
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.Build
+import android.app.AlarmManager
 import android.app.PendingIntent
 import android.os.IBinder
 import android.os.PowerManager
