@@ -53,6 +53,10 @@ import java.util.Locale
 
 class MainActivity : Activity() {
 
+    companion object {
+        var sttActive = false
+    }
+
     private val API_KEY = "AIzaSyDL4NWpuudvTu-ggKEX_pw_sVkwkGUlOzA"
     private val DEFAULT_SERVER = "https://yakala-7ba1c-default-rtdb.europe-west1.firebasedatabase.app"
 
@@ -1803,7 +1807,8 @@ class MainActivity : Activity() {
                 setOutputFile(currentFile!!.absolutePath)
                 prepare(); start()
             }
-            mode = 1
+            sttActive = true
+        mode = 1
             recordStart = System.currentTimeMillis()
             voiceBtn.text = L("stop")
             voiceBtn.background = grad(intArrayOf(0xFFdc2626.toInt(), 0xFFef4444.toInt()), 16)
@@ -1822,6 +1827,7 @@ class MainActivity : Activity() {
     }
 
     private fun stopAudio() {
+        sttActive = false
         mode = 0
         try { recorder?.stop() } catch (_: Exception) {}
         recorder?.release(); recorder = null
@@ -1881,6 +1887,7 @@ class MainActivity : Activity() {
         })
         recognizer!!.startListening(ri)
         vibrate()
+        sttActive = true
         mode = 2
         textBtn.text = L("stop")
         textBtn.background = grad(intArrayOf(0xFFdc2626.toInt(), 0xFFef4444.toInt()), 16)
@@ -1888,6 +1895,7 @@ class MainActivity : Activity() {
     }
 
     private fun stopText() {
+        sttActive = false
         mode = 0
         recognizer?.destroy(); recognizer = null
         textBtn.text = L("stt")

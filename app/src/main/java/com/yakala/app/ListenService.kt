@@ -52,6 +52,10 @@ class ListenService : Service(), SensorEventListener {
         } else {
             startForeground(42, notif(Lang.t(lang(), "ready")))
         }
+        if (Build.VERSION.SDK_INT >= 26) {
+            val nm2 = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+            nm2.createNotificationChannel(NotificationChannel("yakala_rem", "Hatırlatmalar", NotificationManager.IMPORTANCE_HIGH))
+        }
         sm = getSystemService(SENSOR_SERVICE) as SensorManager
         sm.registerListener(this, sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER), SensorManager.SENSOR_DELAY_GAME)
         val pm = getSystemService(POWER_SERVICE) as PowerManager
@@ -72,6 +76,7 @@ class ListenService : Service(), SensorEventListener {
     }
 
     override fun onSensorChanged(e: SensorEvent) {
+        if (MainActivity.sttActive) return
         val x = e.values[0]; val y = e.values[1]; val z = e.values[2]
         val g = Math.sqrt((x * x + y * y + z * z).toDouble()) / SensorManager.GRAVITY_EARTH
         val now = System.currentTimeMillis()
@@ -122,7 +127,7 @@ class ListenService : Service(), SensorEventListener {
     }
 
     private fun startListening() {
-        if (listening) return
+        if (listening || MainActivity.sttActive) return
         listening = true
         vibrate()
         beep(1)
@@ -252,7 +257,22 @@ class ListenService : Service(), SensorEventListener {
                 }
                 startActivity(ai)
             } catch (_: Exception) {}
-            sendBroadcast(i)
+            val ci = Intent(this, ReminderReceiver::class.java).apply {
+                putExtra("openClock", true)
+                putExtra("hour", cal.get(Calendar.HOUR_OF_DAY))
+                putExtra("minute", cal.get(Calendar.MINUTE))
+                putExtra("text", msg)
+            }
+            val cpi = PendingIntent.getBroadcast(this, msg.hashCode() + 5000, ci,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            val nb = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, "yakala_rem")
+            else @Suppress("DEPRECATION") Notification.Builder(this)
+            nb.setSmallIcon(R.drawable.ic_yakala)
+                .setContentTitle("⏰ " + fmtT(t) + " alarm: " + msg)
+                .setContentText("Alarm kurulmadıysa dokun")
+                .setAutoCancel(true)
+                .addAction(0, "⏰ Saat uygulamasına ekle", cpi)
+            nm.notify(msg.hashCode() + 9000, nb.build())
             return true
         }
         if (low.contains("hatırlat")) {
@@ -295,6 +315,8 @@ class ListenService : Service(), SensorEventListener {
         }
         return false
     }
+
+    private fun fmtT(t: Long) = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(t))
 
     private fun normSayi(t0: String): String {
         var t = t0
