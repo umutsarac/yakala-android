@@ -38,6 +38,16 @@ class SendReceiver : BroadcastReceiver() {
                         if (remAt > 0) { put("reminderAt", remAt); put("reminderKind", remKind) }
                     }
                     post("$server/users/$to/inbox.json?auth=$tok", o.toString())
+                    val so = JSONObject().apply {
+                        put("to", to); put("toName", i.getStringExtra("toName") ?: "")
+                        put("text", text); put("time", System.currentTimeMillis())
+                        if (remAt > 0) { put("reminderAt", remAt); put("reminderKind", remKind) }
+                    }
+                    val arr2 = org.json.JSONArray()
+                    arr2.put(so)
+                    val oldSent = prefs.getString("sent", null)
+                    if (oldSent != null) { try { val oa = org.json.JSONArray(oldSent); for (x in 0 until oa.length()) arr2.put(oa.get(x)) } catch (_: Exception) {} }
+                    prefs.edit().putString("sent", arr2.toString()).apply()
                 }
             } catch (_: Exception) {}
             res.finish()

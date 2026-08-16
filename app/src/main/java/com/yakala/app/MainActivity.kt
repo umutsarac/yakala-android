@@ -60,6 +60,7 @@ class MainActivity : Activity() {
     private val visibleNotes = mutableListOf<JSONObject>()
     private lateinit var adapter: NoteAdapter
     private val fNotes = mutableListOf<JSONObject>()
+    private val sentNotes = mutableListOf<JSONObject>()
     private val fDisplay = mutableListOf<String>()
     private lateinit var fAdapter: android.widget.ArrayAdapter<String>
     private lateinit var input: EditText
@@ -213,9 +214,10 @@ class MainActivity : Activity() {
             c.setRequestProperty("Content-Type", "application/json")
             c.outputStream.use { it.write(body.toByteArray()) }
         }
-        val s = if (c.responseCode in 200..299)
+        var s2: String? = if (c.responseCode in 200..299)
             c.inputStream.readBytes().toString(Charsets.UTF_8) else null
-        c.disconnect(); s
+        if (s2 != null && s2.trimStart().startsWith("<")) s2 = null
+        c.disconnect(); s2
     } catch (e: Exception) { null }
     }
 
@@ -304,6 +306,30 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun loadSent() {
+        sentNotes.clear()
+        val raw = prefs.getString("sent", null) ?: return
+        try {
+            val a = JSONArray(raw)
+            for (i in 0 until a.length()) sentNotes.add(a.getJSONObject(i))
+        } catch (_: Exception) {}
+    }
+
+    private fun saveSent() {
+        val a = JSONArray()
+        sentNotes.forEach { a.put(it) }
+        prefs.edit().putString("sent", a.toString()).apply()
+    }
+
+    private fun addSent(to: String, toName: String, text: String, remAt: Long, remKind: String) {
+        val o = JSONObject().apply {
+            put("to", to); put("toName", toName); put("text", text)
+            put("time", System.currentTimeMillis())
+            if (remAt > 0) { put("reminderAt", remAt); put("reminderKind", remKind) }
+        }
+        sentNotes.add(0, o); saveSent()
+    }
+
     private fun loadFNotes() {
         fNotes.clear()
         val raw = prefs.getString("fnotes", null) ?: return
@@ -360,6 +386,7 @@ class MainActivity : Activity() {
     }
 
     private fun friendsDialog() {
+        poll()
         sheet("👥 " + L("friends")) { root ->
             root.addView(LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
@@ -413,6 +440,10 @@ class MainActivity : Activity() {
                             Toast.makeText(this, "❌ Bu kodda kullanıcı bulunamadı", Toast.LENGTH_LONG).show()
                         } else {
                             val name = nameRaw.trim('"')
+                            if (name.contains("<") || name.isEmpty() || name.length > 40) {
+                                Toast.makeText(this, L("notFound"), Toast.LENGTH_LONG).show()
+                                return@post
+                            }
                             AlertDialog.Builder(this)
                                 .setTitle("👤 $name bulundu")
                                 .setMessage("Arkadaş olarak eklensin mi?")
@@ -467,7 +498,7 @@ class MainActivity : Activity() {
             .setView(ll)
             .setPositiveButton("Kaydet") { _, _ ->
                 prefs.edit()
-                    .putString("server", urlEt.text.toString().trim().trimEnd('/'))
+                    .putString("server", urlEt.text.toString().trim().trimEnd('/').let { if (it.contains("firebasedatabase.app") || it.contains("firebaseio.com")) it else DEFAULT_SERVER })
                     .putString("myName", nameEt.text.toString().trim().ifEmpty { "Yakala-$myCode" })
                     .putBoolean("codeReg", false)
                     .apply()
@@ -508,6 +539,8 @@ class MainActivity : Activity() {
                             2 -> {
                                 conn("/users/$me/friends/$uid", "DELETE")
                                 conn("/users/$uid/grants/$me", "DELETE")
+                                conn("/users/$me/grants/$uid", "DELETE")
+                                conn("/users/$uid/friends/$me", "DELETE")
                             }
                         }
                         pollHandler.post { poll() }
@@ -561,6 +594,7 @@ class MainActivity : Activity() {
         val tname = myFriends[uid]?.optString("name") ?: "Arkadaş"
         if (deliveryAt <= 0L) {
             postInbox(uid, text, "now", reminderAt, remKind)
+            addSent(uid, tname, text, reminderAt, remKind)
             Toast.makeText(this, "📤 $tname'a gönderildi" + (if (reminderAt > 0) " + 🔔 ${fmtDate(reminderAt)}" else ""), Toast.LENGTH_SHORT).show()
         } else {
             val job = JSONObject().apply {
@@ -570,6 +604,7 @@ class MainActivity : Activity() {
             val si = Intent(this, SendReceiver::class.java).apply {
                 putExtra("to", uid); putExtra("text", text)
                 putExtra("remAt", reminderAt); putExtra("remKind", remKind)
+                putExtra("toName", tname)
             }
             val spi = PendingIntent.getBroadcast(this, deliveryAt.toInt(), si,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -832,6 +867,7 @@ class MainActivity : Activity() {
         listMine.adapter = adapter
 
         loadFNotes()
+        loadSent()
         fAdapter = object : android.widget.ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, fDisplay) {
             override fun getView(position: Int, cv: View?, parent: ViewGroup): View {
                 val v = super.getView(position, cv, parent)
@@ -1121,22 +1157,40 @@ class MainActivity : Activity() {
             box.addView(row)
             if (name in expandedFriends) {
                 val theirs = fNotes.filter { it.optString("fromName") == name }
-                if (theirs.isEmpty()) {
+                val mine = sentNotes.filter { it.optString("toName") == name }
+                if (theirs.isEmpty() && mine.isEmpty()) {
                     box.addView(TextView(this).apply {
                         text = "• • •"; textSize = 12f; setTextColor(META)
                         setPadding(dp(24), 0, 0, dp(8))
                     })
                 }
-                theirs.forEach { n ->
-                    val idx = fNotes.indexOf(n)
-                    box.addView(TextView(this).apply {
-                        text = (if (n.optBoolean("pending")) "⏳ " else "") + n.optString("text")
-                        textSize = 13f; setTextColor(TXT)
-                        background = roundBg(SURFACE2, 12)
+                val all = mutableListOf<JSONObject>()
+                theirs.forEach { n -> n.put("dir", "in"); all.add(n) }
+                mine.forEach { n -> n.put("dir", "out"); all.add(n) }
+                all.sortByDescending { it.optLong("time") }
+                all.forEach { n ->
+                    val isIn = n.optString("dir") == "in"
+                    val card = LinearLayout(this).apply {
+                        orientation = LinearLayout.VERTICAL
+                        background = roundBg(if (isIn) SURFACE2 else tint(ACCENT, 40), 12)
                         setPadding(dp(14), dp(10), dp(14), dp(10))
                         layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(6); marginStart = dp(12) }
-                        setOnClickListener { friendDialog(idx) }
+                    }
+                    card.addView(TextView(this).apply {
+                        text = (if (isIn) "📥" else "📤") + " " + (if (n.optBoolean("pending")) "⏳ " else "") + n.optString("text")
+                        textSize = 13f; setTextColor(TXT)
                     })
+                    val rem = n.optLong("reminderAt")
+                    card.addView(TextView(this).apply {
+                        text = fmtDate(n.optLong("time")) + (if (rem > 0) (if (n.optString("reminderKind") == "alarm") " • ⏰ alarm" else " • 🔔 hatırlatıcı") else "")
+                        textSize = 10f; setTextColor(META)
+                        setPadding(0, dp(4), 0, 0)
+                    })
+                    if (isIn) {
+                        val idx = fNotes.indexOf(n)
+                        card.setOnClickListener { friendDialog(idx) }
+                    }
+                    box.addView(card)
                 }
             }
         }
