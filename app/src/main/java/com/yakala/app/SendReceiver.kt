@@ -37,7 +37,10 @@ class SendReceiver : BroadcastReceiver() {
                         put("pending", pending); put("kind", "timed")
                         if (remAt > 0) { put("reminderAt", remAt); put("reminderKind", remKind) }
                     }
-                    post("$server/users/$to/inbox.json?auth=$tok", o.toString())
+                    val actAt = i.getLongExtra("actAt", 0L)
+                    if (actAt > 0) o.put("activateAt", actAt)
+                    val key = "s" + System.currentTimeMillis()
+                    putReq("$server/users/$to/inbox/$key.json?auth=$tok", o.toString())
                     val so = JSONObject().apply {
                         put("to", to); put("toName", i.getStringExtra("toName") ?: "")
                         put("text", text); put("time", System.currentTimeMillis())
@@ -81,6 +84,15 @@ class SendReceiver : BroadcastReceiver() {
     private fun post(url: String, body: String): String? = try {
         val c = URL(url).openConnection() as HttpURLConnection
         c.requestMethod = "POST"; c.doOutput = true
+        c.connectTimeout = 6000; c.readTimeout = 6000
+        c.setRequestProperty("Content-Type", "application/json")
+        c.outputStream.use { it.write(body.toByteArray()) }
+        if (c.responseCode in 200..299) c.inputStream.readBytes().toString(Charsets.UTF_8) else null
+    } catch (e: Exception) { null }
+
+    private fun putReq(url: String, body: String): String? = try {
+        val c = URL(url).openConnection() as HttpURLConnection
+        c.requestMethod = "PUT"; c.doOutput = true
         c.connectTimeout = 6000; c.readTimeout = 6000
         c.setRequestProperty("Content-Type", "application/json")
         c.outputStream.use { it.write(body.toByteArray()) }

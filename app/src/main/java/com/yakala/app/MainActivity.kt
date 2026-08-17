@@ -304,23 +304,27 @@ class MainActivity : Activity() {
     }
 
     private fun handleInbox(raw: String?) {
-        var newPending = false
-        val map = parseMap(raw)
-        for ((key, v) in map) {
+        if (raw == null || raw == "null") return
+        val me = prefs.getString("uid", null) ?: return
+        val o = JSONObject(raw)
+        val keys = o.keys()
+        var changed = false
+        val nowT = System.currentTimeMillis()
+        while (keys.hasNext()) {
+            val key = keys.next()
             if (key in seenInbox) continue
+            val v = o.getJSONObject(key)
+            if (v.optLong("activateAt") > nowT) continue
             seenInbox.add(key)
             v.put("id", key)
             fNotes.add(0, v)
             showReminderNotif(v)
-            if (v.optBoolean("pending")) newPending = true
             val remAt = v.optLong("reminderAt")
-            if (remAt > System.currentTimeMillis()) scheduleFriendReminder(v, remAt)
-            Thread { conn("/users/${myUid}/inbox/$key", "DELETE") }.start()
+            if (remAt > nowT) scheduleFriendReminder(v, remAt)
+            Thread { ensureAuthSync(); conn("/users/$me/inbox/$key", "DELETE") }.start()
+            changed = true
         }
-        if (map.isNotEmpty()) {
-            saveFNotes(); updateFList()
-            if (newPending) Toast.makeText(this, "📬 Yeni not isteği var", Toast.LENGTH_SHORT).show()
-        }
+        if (changed) { saveFNotes(); updateFList() }
     }
 
     private fun loadSent() {
@@ -338,11 +342,13 @@ class MainActivity : Activity() {
         prefs.edit().putString("sent", a.toString()).apply()
     }
 
-    private fun addSent(to: String, toName: String, text: String, remAt: Long, remKind: String) {
+    private fun addSent(to: String, toName: String, text: String, remAt: Long, remKind: String, skey: String = "", actAt: Long = 0) {
         val o = JSONObject().apply {
             put("to", to); put("toName", toName); put("text", text)
             put("time", System.currentTimeMillis())
             if (remAt > 0) { put("reminderAt", remAt); put("reminderKind", remKind) }
+            if (skey.isNotEmpty()) put("skey", skey)
+            if (actAt > 0) put("activateAt", actAt)
         }
         sentNotes.add(0, o); saveSent()
     }
@@ -575,6 +581,54 @@ class MainActivity : Activity() {
                 else pickTime { at -> askReminder(uid, text, at) }
             }.show()
         }.show()
+    }
+
+    private fun askReminder(uid: String, text: String, deliveryAt: Long) {
+        val tname = myFriends[uid]?.optString("name") ?: "Arkadaş"
+        AlertDialog.Builder(this).setTitle("🔔 $tname için hatırlatıcı eklensin mi?").setItems(arrayOf("🔔 Hatırlatıcı ekle", "⏰ Alarm ekle", "➡️ Hatırlatıcısız gönder")) { _, r ->
+            when (r) {
+                0 -> pickTime { remAt -> doSend(uid, text, deliveryAt, remAt, "reminder") }
+                1 -> pickTime { remAt -> doSend(uid, text, deliveryAt, remAt, "alarm") }
+                else -> doSend(uid, text, deliveryAt, 0L)
+            }
+        }.show()
+    }
+
+    private fun pickTime(onPick: (Long) -> Unit) {
+        val cal = Calendar.getInstance()
+        DatePickerDialog(this, { _, y, m, d ->
+            cal.set(Calendar.YEAR, y); cal.set(Calendar.MONTH, m); cal.set(Calendar.DAY_OF_MONTH, d)
+            TimePickerDialog(this, { _, hh, mm ->
+                cal.set(Calendar.HOUR_OF_DAY, hh); cal.set(Calendar.MINUTE, mm)
+                cal.set(Calendar.SECOND, 0); cal.set(Calendar.MILLISECOND, 0)
+                if (cal.timeInMillis <= System.currentTimeMillis() + 60_000) {
+                    Toast.makeText(this, "Gelecek bir zaman seç", Toast.LENGTH_SHORT).show(); return@TimePickerDialog
+                }
+                onPick(cal.timeInMillis)
+            }, cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE), true).show()
+        }, cal.get(Calendar.YEAR), cal.get(Calendar.MONTH), cal.get(Calendar.DAY_OF_MONTH)).show()
+    }
+
+    private fun doSend(uid: String, text: String, deliveryAt: Long, reminderAt: Long, remKind: String = "reminder") {
+        val tname = myFriends[uid]?.optString("name") ?: "Arkadaş"
+        val key = "s" + System.currentTimeMillis()
+        Thread {
+            ensureAuthSync()
+            val tok = prefs.getString("idToken", null) ?: return@Thread
+            val o = JSONObject().apply {
+                put("from", myCode); put("fromName", myName)
+                put("text", text); put("time", System.currentTimeMillis())
+                put("pending", myGrants[uid] != "full")
+                put("kind", "now")
+                if (deliveryAt > 0) put("activateAt", deliveryAt)
+                if (reminderAt > 0) { put("reminderAt", reminderAt); put("reminderKind", remKind) }
+            }
+            conn("/users/$uid/inbox/$key", "PUT", o.toString())
+        }.start()
+        addSent(uid, tname, text, reminderAt, remKind, key, deliveryAt)
+        if (deliveryAt > 0) Toast.makeText(this, "📨 Gönderildi • ⏰ ${fmtDate(deliveryAt)}'te aktif olacak", Toast.LENGTH_LONG).show()
+        else if (reminderAt > 0) Toast.makeText(this, "📨 Gönderildi • ${if (remKind == "alarm") "⏰" else "🔔"} ${fmtDate(reminderAt)}", Toast.LENGTH_LONG).show()
+        else Toast.makeText(this, "📨 $tname → gönderildi", Toast.LENGTH_SHORT).show()
     }
 
     private fun askReminder(uid: String, text: String, deliveryAt: Long) {
@@ -1225,6 +1279,26 @@ class MainActivity : Activity() {
             .setNegativeButton(L("cancel"), null).show()
     }
 
+    private fun sentDialog(n: JSONObject) {
+        val actAt = n.optLong("activateAt")
+        val items = mutableListOf<String>()
+        if (actAt > System.currentTimeMillis()) items.add("🚫 Gönderimi iptal et")
+        items.add("🗑 Kaydı sil")
+        AlertDialog.Builder(this).setTitle("📤 " + n.optString("toName"))
+            .setItems(items.toTypedArray()) { _, w ->
+                when (items[w]) {
+                    "🚫 Gönderimi iptal et" -> {
+                        val key = n.optString("skey"); val to = n.optString("to")
+                        if (key.isNotEmpty()) Thread { ensureAuthSync(); conn("/users/$to/inbox/$key", "DELETE") }.start()
+                        sentNotes.remove(n); saveSent()
+                        Toast.makeText(this, "🚫 İptal edildi", Toast.LENGTH_SHORT).show()
+                        buildFriendsPanel()
+                    }
+                    "🗑 Kaydı sil" -> { sentNotes.remove(n); saveSent(); buildFriendsPanel() }
+                }
+            }.show()
+    }
+
     private fun buildFriendsPanel() {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1287,13 +1361,15 @@ class MainActivity : Activity() {
                     })
                     val rem = n.optLong("reminderAt")
                     card.addView(TextView(this).apply {
-                        text = fmtDate(n.optLong("time")) + (if (rem > 0) (if (n.optString("reminderKind") == "alarm") " • ⏰ alarm" else " • 🔔 hatırlatıcı") else "")
+                        text = fmtDate(n.optLong("time")) + (if (n.optLong("activateAt") > 0) " • 🕐 " + fmtDate(n.optLong("activateAt")) else "") + (if (rem > 0) (if (n.optString("reminderKind") == "alarm") " • ⏰ alarm" else " • 🔔 hatırlatıcı") else "")
                         textSize = 10f; setTextColor(META)
                         setPadding(0, dp(4), 0, 0)
                     })
                     if (isIn) {
                         val idx = fNotes.indexOf(n)
                         card.setOnClickListener { friendDialog(idx) }
+                    } else {
+                        card.setOnClickListener { sentDialog(n) }
                     }
                     box.addView(card)
                 }

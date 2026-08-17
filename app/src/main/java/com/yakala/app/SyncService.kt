@@ -79,9 +79,10 @@ class SyncService : Service() {
             val keys = o.keys()
             while (keys.hasNext()) {
                 val key = keys.next()
+                val v = o.getJSONObject(key)
+                if (v.optLong("activateAt") > System.currentTimeMillis()) continue
                 if (key in seen) continue
                 seen.add(key); saveSeen()
-                val v = o.getJSONObject(key)
                 v.put("id", key)
                 appendFNote(prefs, v)
                 notifyNote(v)
