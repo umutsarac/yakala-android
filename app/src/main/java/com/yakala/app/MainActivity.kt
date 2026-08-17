@@ -631,56 +631,6 @@ class MainActivity : Activity() {
         else Toast.makeText(this, "📨 $tname → gönderildi", Toast.LENGTH_SHORT).show()
     }
 
-    private fun askReminder(uid: String, text: String, deliveryAt: Long) {
-        val tname = myFriends[uid]?.optString("name") ?: "Arkadaş"
-        AlertDialog.Builder(this).setTitle("🔔 $tname için hatırlatıcı eklensin mi?").setItems(arrayOf("🔔 Hatırlatıcı ekle", "⏰ Alarm ekle", "➡️ Hatırlatıcısız gönder")) { _, r ->
-            when (r) {
-                0 -> pickTime { remAt -> doSend(uid, text, deliveryAt, remAt, "reminder") }
-                1 -> pickTime { remAt -> doSend(uid, text, deliveryAt, remAt, "alarm") }
-                else -> doSend(uid, text, deliveryAt, 0L)
-            }
-        }.show()
-    }
-
-    private fun pickTime(onPick: (Long) -> Unit) {
-        val cal = Calendar.getInstance()
-        DatePickerDialog(this, { _, y, m, d ->
-            cal.set(Calendar.YEAR, y); cal.set(Calendar.MONTH, m); cal.set(Calendar.DAY_OF_MONTH, d)
-            TimePickerDialog(this, { _, hh, mm ->
-                cal.set(Calendar.HOUR_OF_DAY, hh); cal.set(Calendar.MINUTE, mm)
-                cal.set(Calendar.SECOND, 0); cal.set(Calendar.MILLISECOND, 0)
-                if (cal.timeInMillis <= System.currentTimeMillis() + 60_000) {
-                    Toast.makeText(this, "Gelecek bir zaman seç", Toast.LENGTH_SHORT).show(); return@TimePickerDialog
-                }
-                onPick(cal.timeInMillis)
-            }, cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE), true).show()
-        }, cal.get(Calendar.YEAR), cal.get(Calendar.MONTH), cal.get(Calendar.DAY_OF_MONTH)).show()
-    }
-
-    private fun doSend(uid: String, text: String, deliveryAt: Long, reminderAt: Long, remKind: String = "reminder") {
-        val tname = myFriends[uid]?.optString("name") ?: "Arkadaş"
-        if (deliveryAt <= 0L) {
-            postInbox(uid, text, "now", reminderAt, remKind)
-            addSent(uid, tname, text, reminderAt, remKind)
-            Toast.makeText(this, "📤 $tname'a gönderildi" + (if (reminderAt > 0) " + 🔔 ${fmtDate(reminderAt)}" else ""), Toast.LENGTH_SHORT).show()
-        } else {
-            val job = JSONObject().apply {
-                put("to", uid); put("text", text); put("at", deliveryAt); put("reminderAt", reminderAt); put("remKind", remKind)
-            }
-            scheduledSends.add(job); saveScheduled()
-            val si = Intent(this, SendReceiver::class.java).apply {
-                putExtra("to", uid); putExtra("text", text)
-                putExtra("remAt", reminderAt); putExtra("remKind", remKind)
-                putExtra("toName", tname)
-            }
-            val spi = PendingIntent.getBroadcast(this, deliveryAt.toInt(), si,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-            (getSystemService(ALARM_SERVICE) as AlarmManager)
-                .setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, deliveryAt, spi)
-            Toast.makeText(this, "⏰ ${fmtDate(deliveryAt)}'de ulaşacak" + (if (reminderAt > 0) " + 🔔 ${fmtDate(reminderAt)}" else ""), Toast.LENGTH_LONG).show()
-        }
-    }
-
     private fun postInbox(uid: String, text: String, kind: String, reminderAt: Long, remKind: String = "reminder") {
         val pending = myGrants[uid] != "full"
         val o = JSONObject().apply {
